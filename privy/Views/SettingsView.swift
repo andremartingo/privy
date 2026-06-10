@@ -169,7 +169,7 @@ struct SettingsView: View {
     private func settingsContent(for tab: SettingsTab) -> some View {
         switch tab {
         case .general:
-            GeneralSettingsView()
+            GeneralSettingsView(settings: settings)
         case .appearance:
             AppearanceSettingsView(settings: settings, selectedTheme: $selectedTheme)
                 .onAppear {
@@ -182,26 +182,27 @@ struct SettingsView: View {
 }
 
 struct GeneralSettingsView: View {
+    @Bindable var settings: AppSettings
+
     var body: some View {
         SettingsPageView(
             title: "General Settings",
             subtitle: "Configure general app behavior and preferences."
         ) {
-            SettingsGroup(title: "Coming Soon") {
-                HStack {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .foregroundStyle(.secondary)
-                        .font(.title2)
-
+            SettingsGroup(title: "Recording") {
+                Toggle(
+                    isOn: Binding(
+                        get: { settings.useSampleAudioForNewMemos },
+                        set: { settings.setUseSampleAudioForNewMemos($0) }
+                    )
+                ) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("General Preferences")
+                        Text("Use Sample Audio")
                             .fontWeight(.medium)
-                        Text("Additional settings will be added in future updates")
+                        Text("New memos transcribe sample.mp3 instead of recording from the microphone.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-
-                    Spacer()
                 }
                 .padding()
             }

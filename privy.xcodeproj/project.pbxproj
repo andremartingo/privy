@@ -161,10 +161,10 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = privy/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Privy;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Privy needs microphone access to transcribe your audio.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Privy uses on-device speech recognition to create transcripts.";
-				INFOPLIST_FILE = privy/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -212,10 +212,10 @@
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = privy/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Privy;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Privy needs microphone access to transcribe your audio.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Privy uses on-device speech recognition to create transcripts.";
-				INFOPLIST_FILE = privy/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

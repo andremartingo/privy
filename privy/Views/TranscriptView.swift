@@ -33,6 +33,7 @@ struct TranscriptView: View {
     
     // Speaker view state
     @State var showingSpeakerView = false
+    @State private var isProcessingSampleAudio = false
 
     @Environment(\.modelContext) private var modelContext
     @Environment(AppSettings.self) private var settings
@@ -273,9 +274,16 @@ struct TranscriptView: View {
             if !memo.isDone && memo.text.characters.isEmpty {
                 // Reset transcriber to ensure clean state
                 speechTranscriber.reset()
-                // Use a small delay to ensure the view is fully loaded
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    isRecording = true
+
+                if settings.useSampleAudioForNewMemos {
+                    Task {
+                        await transcribeSampleAudio()
+                    }
+                } else {
+                    // Use a small delay to ensure the view is fully loaded
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        isRecording = true
+                    }
                 }
             }
         }
@@ -341,13 +349,16 @@ struct TranscriptView: View {
             } label: {
                 HStack(spacing: 12) {
                     Label(
-                        isRecording ? "Stop Recording" : "Start Recording",
-                        systemImage: isRecording ? "stop.circle.fill" : "record.circle.fill"
+                        sampleOrRecordingButtonTitle,
+                        systemImage: sampleOrRecordingButtonImage
                     )
                     .font(.headline)
                     .fontWeight(.semibold)
 
-                    if isRecording {
+                    if isProcessingSampleAudio {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if isRecording {
                         Text(formatDuration(recordingDuration))
                             .font(.headline)
                             .fontWeight(.semibold)
@@ -358,6 +369,7 @@ struct TranscriptView: View {
             .buttonStyle(.glass)
             .controlSize(.extraLarge)
             .tint(isRecording ? .red : Color(red: 0.36, green: 0.69, blue: 0.55))  // Green for start, red for stop
+            .disabled(isProcessingSampleAudio)
         }
 
         @ViewBuilder
@@ -700,11 +712,14 @@ struct TranscriptView: View {
         } label: {
             HStack(spacing: 8) {
                 Label(
-                    isRecording ? "Stop" : "Record",
-                    systemImage: isRecording ? "stop.fill" : "record.circle"
+                    sampleOrRecordingButtonTitle,
+                    systemImage: sampleOrRecordingButtonImage
                 )
 
-                if isRecording {
+                if isProcessingSampleAudio {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if isRecording {
                     Text(formatDuration(recordingDuration))
                         .font(.body)
                         .monospacedDigit()
@@ -712,6 +727,7 @@ struct TranscriptView: View {
             }
         }
         .tint(isRecording ? .red : Color(red: 0.36, green: 0.69, blue: 0.55))
+        .disabled(isProcessingSampleAudio)
     }
 
     @ViewBuilder
@@ -783,9 +799,9 @@ struct TranscriptView: View {
                     VStack(spacing: 20) {
                         // Recording indicator with glass effect
                         VStack(spacing: 12) {
-                            Image(systemName: "mic.fill")
+                            Image(systemName: isProcessingSampleAudio ? "waveform" : "mic.fill")
                                 .font(.system(size: 48))
-                                .foregroundStyle(.red)
+                                .foregroundStyle(isProcessingSampleAudio ? SpokenWordTranscriber.green : .red)
                                 .symbolEffect(.pulse, isActive: isRecording)
 
                             // Recording timer
@@ -793,12 +809,16 @@ struct TranscriptView: View {
                                 .font(.system(size: 32, weight: .medium, design: .monospaced))
                                 .foregroundStyle(.primary)
 
-                            Text("Listening...")
+                            Text(isProcessingSampleAudio ? "Processing Sample..." : "Listening...")
                                 .font(.title2)
                                 .fontWeight(.medium)
                                 .foregroundStyle(.primary)
 
-                            Text("Start speaking into the microphone")
+                            Text(
+                                isProcessingSampleAudio
+                                    ? "Transcribing sample.mp3"
+                                    : "Start speaking into the microphone"
+                            )
                                 .font(.body)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -882,6 +902,49 @@ extension TranscriptView {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    private var sampleOrRecordingButtonTitle: String {
+        if isProcessingSampleAudio {
+            return "Processing Sample"
+        }
+
+        return isRecording ? "Stop Recording" : "Start Recording"
+    }
+
+    private var sampleOrRecordingButtonImage: String {
+        if isProcessingSampleAudio {
+            return "waveform"
+        }
+
+        return isRecording ? "stop.circle.fill" : "record.circle.fill"
+    }
+
+    @MainActor
+    private func transcribeSampleAudio() async {
+        guard !isProcessingSampleAudio else { return }
+        guard let recorder else {
+            enhancementError = "Sample transcription failed: recorder is not ready."
+            return
+        }
+        guard let sampleURL = Bundle.main.url(forResource: "sample", withExtension: "mp3") else {
+            enhancementError = "Sample transcription failed: sample.mp3 was not found in the app bundle."
+            return
+        }
+
+        isProcessingSampleAudio = true
+
+        do {
+            try await recorder.transcribeSampleAudio(from: sampleURL)
+            await generateTitleIfNeeded()
+            await generateAIEnhancements()
+        } catch let error as TranscriptionError {
+            enhancementError = "Sample transcription failed: \(error.descriptionString)"
+        } catch {
+            enhancementError = "Sample transcription failed: \(error.localizedDescription)"
+        }
+
+        isProcessingSampleAudio = false
     }
 
     func handlePlayback() {

@@ -4,6 +4,7 @@ import FluidAudio
 @Observable
 class AppSettings {
     var colorScheme: ColorScheme?
+    var useSampleAudioForNewMemos: Bool = false
     
     // Diarization settings
     var diarizationEnabled: Bool = true
@@ -29,6 +30,8 @@ class AppSettings {
         
         // Load diarization settings
         loadDiarizationSettings()
+        useSampleAudioForNewMemos =
+            UserDefaults.standard.object(forKey: "useSampleAudioForNewMemos") as? Bool ?? false
     }
 
     func setColorScheme(_ scheme: ColorScheme?) {
@@ -53,6 +56,11 @@ class AppSettings {
         case .some(_):
             return "System"
         }
+    }
+
+    func setUseSampleAudioForNewMemos(_ enabled: Bool) {
+        self.useSampleAudioForNewMemos = enabled
+        UserDefaults.standard.set(enabled, forKey: "useSampleAudioForNewMemos")
     }
     
     // MARK: - Diarization Settings

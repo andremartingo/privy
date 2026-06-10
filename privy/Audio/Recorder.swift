@@ -93,6 +93,64 @@ class Recorder {
         }
     }
 
+    @MainActor
+    func transcribeSampleAudio(from sampleURL: URL) async throws {
+        print("DEBUG [Recorder]: Starting sample audio transcription")
+
+        await MainActor.run {
+            memo.url.wrappedValue = sampleURL
+            memo.isDone.wrappedValue = false
+        }
+
+        do {
+            try await transcriber.setUpTranscriber()
+            print("DEBUG [Recorder]: Transcriber setup completed for sample audio")
+        } catch {
+            print("DEBUG [Recorder]: Sample transcriber setup failed: \(error)")
+            throw error
+        }
+
+        do {
+            try await diarizationManager.initialize()
+            print("DEBUG [Recorder]: Diarization manager initialized for sample audio")
+        } catch {
+            print("DEBUG [Recorder]: Diarization setup failed for sample audio: \(error)")
+        }
+
+        let sampleFile = try AVAudioFile(forReading: sampleURL)
+        audioFile = sampleFile
+
+        let duration = Double(sampleFile.length) / sampleFile.processingFormat.sampleRate
+        await MainActor.run {
+            memo.duration.wrappedValue = duration
+        }
+
+        let frameCapacity: AVAudioFrameCount = 4096
+        while sampleFile.framePosition < sampleFile.length {
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: sampleFile.processingFormat,
+                frameCapacity: frameCapacity
+            ) else {
+                throw TranscriptionError.invalidAudioDataType
+            }
+
+            try sampleFile.read(into: buffer)
+            guard buffer.frameLength > 0 else { break }
+
+            try await transcriber.streamAudioToTranscriber(buffer)
+            await diarizationManager.processAudioBuffer(buffer)
+        }
+
+        try await transcriber.finishTranscribing()
+        await processFinalDiarization()
+
+        await MainActor.run {
+            memo.isDone.wrappedValue = true
+        }
+
+        print("DEBUG [Recorder]: Sample audio transcription completed")
+    }
+
     func stopRecording() async throws {
         print("DEBUG [Recorder]: Stopping recording session")
 
