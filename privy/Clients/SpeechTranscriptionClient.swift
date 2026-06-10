@@ -1,6 +1,58 @@
+import Dependencies
 import Foundation
 import Speech
 import SwiftUI
+
+struct SpeechTranscriptionClient {
+    var makeTranscriber: @MainActor @Sendable (Binding<Memo>) -> SpokenWordTranscriber
+}
+
+extension SpeechTranscriptionClient {
+    static var live: Self {
+        Self(
+            makeTranscriber: { memo in
+                SpeechTranscriptionService.shared.makeTranscriber(memo: memo)
+            }
+        )
+    }
+
+    static var preview: Self {
+        Self(
+            makeTranscriber: { memo in
+                SpokenWordTranscriber(memo: memo)
+            }
+        )
+    }
+}
+
+extension SpeechTranscriptionClient: DependencyKey {
+    static var liveValue: Self {
+        #if DEBUG
+            preview
+        #else
+            live
+        #endif
+    }
+    static let previewValue = preview
+}
+
+extension DependencyValues {
+    var speechTranscriptionClient: SpeechTranscriptionClient {
+        get { self[SpeechTranscriptionClient.self] }
+        set { self[SpeechTranscriptionClient.self] = newValue }
+    }
+}
+
+@MainActor
+private final class SpeechTranscriptionService {
+    static let shared = SpeechTranscriptionService()
+
+    private init() {}
+
+    func makeTranscriber(memo: Binding<Memo>) -> SpokenWordTranscriber {
+        SpokenWordTranscriber(memo: memo)
+    }
+}
 
 @Observable
 @MainActor
@@ -23,6 +75,7 @@ final class SpokenWordTranscriber {
 
     var volatileTranscript: AttributedString = ""
     var finalizedTranscript: AttributedString = ""
+    var onTranscriptChanged: ((AttributedString, AttributedString) -> Void)?
 
     static let locale = Locale(
         components: .init(languageCode: .english, script: nil, languageRegion: .unitedStates))
@@ -97,9 +150,11 @@ final class SpokenWordTranscriber {
                         finalizedTranscript += text
                         volatileTranscript = ""
                         updateMemoWithNewText(withFinal: text)
+                        onTranscriptChanged?(finalizedTranscript, volatileTranscript)
                     } else {
                         volatileTranscript = text
                         volatileTranscript.foregroundColor = .purple.opacity(0.5)
+                        onTranscriptChanged?(finalizedTranscript, volatileTranscript)
                     }
                 }
                 print(
@@ -158,6 +213,7 @@ final class SpokenWordTranscriber {
         print("[Transcriber DEBUG]: Resetting transcriber - clearing transcripts")
         volatileTranscript = ""
         finalizedTranscript = ""
+        onTranscriptChanged?(finalizedTranscript, volatileTranscript)
     }
 }
 

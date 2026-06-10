@@ -1,20 +1,16 @@
-import Speech
 import SwiftData
 import SwiftUI
 
 struct ContentView: View {
     @Query(sort: \Memo.createdAt, order: .reverse) private var memos: [Memo]
-    @State var selection: Memo?
-    @State var currentMemo: Memo = Memo.blank()
-    @State private var showingSettings = false
-    @State private var isRecording = false  // Track recording state globally
+    @StateObject private var store = ContentStore()
     @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationSplitView {
             ZStack {
-                List(selection: $selection) {
+                List(selection: selectionBinding) {
                     ForEach(memos) { memo in
                         NavigationLink(value: memo) {
                             VStack(alignment: .leading, spacing: 4) {
@@ -35,7 +31,11 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .onDelete(perform: deleteMemos)
+                    .onDelete { offsets in
+                        Task {
+                            await store.send(.deleteMemos(offsets, memos, modelContext))
+                        }
+                    }
                 }
                 .navigationTitle("Memos")
                 .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
@@ -48,7 +48,9 @@ struct ContentView: View {
                             }
 
                             Button {
-                                showingSettings = true
+                                Task {
+                                    await store.send(.settingsTapped)
+                                }
                             } label: {
                                 Label("Settings", systemImage: "gearshape")
                             }
@@ -56,10 +58,12 @@ struct ContentView: View {
                     #elseif os(macOS)
                         // On macOS, settings are in the app menu, so only show the Add button
                         ToolbarItemGroup(placement: .primaryAction) {
-                            if !memos.isEmpty && selection != nil {
+                            if !memos.isEmpty && store.state.selection != nil {
                                 Button {
-                                    if let selection = selection {
-                                        deleteMemo(selection)
+                                    if let selection = store.state.selection {
+                                        Task {
+                                            await store.send(.deleteMemo(selection, modelContext))
+                                        }
                                     }
                                 } label: {
                                     Label("Delete Memo", systemImage: "trash")
@@ -67,9 +71,11 @@ struct ContentView: View {
                                 .foregroundColor(.red)
                             }
 
-                            if !isRecording {
+                            if !store.state.isRecording {
                                 Button {
-                                    addMemo()
+                                    Task {
+                                        await store.send(.addMemo(modelContext))
+                                    }
                                 } label: {
                                     Label("New Memo", systemImage: "plus")
                                 }
@@ -81,12 +87,14 @@ struct ContentView: View {
 
                 #if os(iOS)
                     // Floating New button at the bottom for iOS
-                    if !isRecording {
+                    if !store.state.isRecording {
                         VStack {
                             Spacer()
 
                             Button {
-                                addMemo()
+                                Task {
+                                    await store.send(.addMemo(modelContext))
+                                }
                             } label: {
                                 Label("New", systemImage: "plus.circle.fill")
                                     .font(.headline)
@@ -101,41 +109,62 @@ struct ContentView: View {
                 #endif
             }
         } detail: {
-            if selection != nil {
-                TranscriptView(memo: $currentMemo, isRecording: $isRecording)
+            if store.state.selection != nil {
+                TranscriptView(memo: currentMemoBinding, isRecording: isRecordingBinding)
             } else {
                 Text("Select an item")
             }
         }
-        .onChange(of: selection) {
-            if let selection {
-                currentMemo = selection
-            }
-        }
         #if os(iOS)
-            .sheet(isPresented: $showingSettings) {
+            .sheet(isPresented: settingsBinding) {
                 SettingsView(settings: settings)
             }
         #endif
     }
 
-    private func addMemo() {
-        let newMemo = Memo.blank()
-        modelContext.insert(newMemo)
-        selection = newMemo
-        currentMemo = newMemo
+    private var selectionBinding: Binding<Memo?> {
+        Binding(
+            get: { store.state.selection },
+            set: { newValue in
+                Task {
+                    await store.send(.selectionChanged(newValue))
+                }
+            }
+        )
     }
 
-    private func deleteMemos(offsets: IndexSet) {
-        for index in offsets {
-            deleteMemo(memos[index])
-        }
+    private var currentMemoBinding: Binding<Memo> {
+        Binding(
+            get: { store.state.currentMemo },
+            set: { newValue in
+                Task {
+                    await store.send(.currentMemoChanged(newValue))
+                }
+            }
+        )
     }
 
-    private func deleteMemo(_ memo: Memo) {
-        if selection == memo {
-            selection = nil
-        }
-        modelContext.delete(memo)
+    private var isRecordingBinding: Binding<Bool> {
+        Binding(
+            get: { store.state.isRecording },
+            set: { newValue in
+                Task {
+                    await store.send(.recordingChanged(newValue))
+                }
+            }
+        )
+    }
+
+    private var settingsBinding: Binding<Bool> {
+        Binding(
+            get: { store.state.destination == .settings },
+            set: { isPresented in
+                if !isPresented {
+                    Task {
+                        await store.send(.settingsDismissed)
+                    }
+                }
+            }
+        )
     }
 }

@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		30C120B42FD92A3400E86CE4 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 30C120B32FD92A3400E86CE4 /* FluidAudio */; };
+		30C1216B2FD93D3000E86CE4 /* Dependencies in Frameworks */ = {isa = PBXBuildFile; productRef = 30C1216A2FD93D3000E86CE4 /* Dependencies */; };
+		30C1216E2FD93D3000E86CE4 /* SwiftUINavigation in Frameworks */ = {isa = PBXBuildFile; productRef = 30C1216D2FD93D3000E86CE4 /* SwiftUINavigation */; };
+		30C121712FD93D3000E86CE4 /* CasePaths in Frameworks */ = {isa = PBXBuildFile; productRef = 30C121702FD93D3000E86CE4 /* CasePaths */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +44,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				30C120B42FD92A3400E86CE4 /* FluidAudio in Frameworks */,
+				30C1216B2FD93D3000E86CE4 /* Dependencies in Frameworks */,
+				30C1216E2FD93D3000E86CE4 /* SwiftUINavigation in Frameworks */,
+				30C121712FD93D3000E86CE4 /* CasePaths in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +90,9 @@
 			name = privy;
 			packageProductDependencies = (
 				30C120B32FD92A3400E86CE4 /* FluidAudio */,
+				30C1216A2FD93D3000E86CE4 /* Dependencies */,
+				30C1216D2FD93D3000E86CE4 /* SwiftUINavigation */,
+				30C121702FD93D3000E86CE4 /* CasePaths */,
 			);
 			productName = privy;
 			productReference = 30C1209F2FD929F300E86CE4 /* privy.app */;
@@ -115,6 +124,9 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				30C120B22FD92A3400E86CE4 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				30C121672FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-dependencies" */,
+				30C1216C2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-navigation" */,
+				30C1216F2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-case-paths" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 30C120A02FD929F300E86CE4 /* Products */;
@@ -397,6 +409,30 @@
 				version = 0.15.2;
 			};
 		};
+		30C121672FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-dependencies" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-dependencies";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.13.0;
+			};
+		};
+		30C1216C2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-navigation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-navigation";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+		30C1216F2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-case-paths" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-case-paths";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.7.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -404,6 +440,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 30C120B22FD92A3400E86CE4 /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
+		};
+		30C1216A2FD93D3000E86CE4 /* Dependencies */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30C121672FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-dependencies" */;
+			productName = Dependencies;
+		};
+		30C1216D2FD93D3000E86CE4 /* SwiftUINavigation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30C1216C2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-navigation" */;
+			productName = SwiftUINavigation;
+		};
+		30C121702FD93D3000E86CE4 /* CasePaths */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 30C1216F2FD93D3000E86CE4 /* XCRemoteSwiftPackageReference "swift-case-paths" */;
+			productName = CasePaths;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

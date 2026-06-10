@@ -1,59 +1,27 @@
-import AVFoundation
-import Foundation
-import Speech
-import SwiftUI
+import CoreMedia
 import SwiftData
-import FluidAudio
+import SwiftUI
 
 struct TranscriptView: View {
-    @Binding var memo: Memo
-    @Binding var isRecording: Bool
-    @State var isPlaying = false
-    @State var isGenerating = false
-
-    @State var recorder: Recorder?
-    @State var speechTranscriber: SpokenWordTranscriber
-    @State var diarizationManager: DiarizationManager
-
-    @State var downloadProgress = 0.0
-
-    @State var currentPlaybackTime = 0.0
-
-    @State var timer: Timer?
-
-    // Recording timer state
-    @State var recordingStartTime: Date?
-    @State var recordingDuration: TimeInterval = 0
-    @State var recordingTimer: Timer?
-
-    // AI enhancement state
-    @State var showingEnhancedView = false
-    @State var enhancementError: String?
-    @State var isEditingSummary = false
-    
-    // Speaker view state
-    @State var showingSpeakerView = false
-    @State private var isProcessingSampleAudio = false
-
     @Environment(\.modelContext) private var modelContext
     @Environment(AppSettings.self) private var settings
-    
+    @StateObject private var store: TranscriptStore
+    @Binding private var parentIsRecording: Bool
+
+    private var memo: Memo { store.memo.wrappedValue }
+    private var isRecording: Bool { store.state.isRecording }
+    private var isPlaying: Bool { store.state.isPlaying }
+    private var isGenerating: Bool { store.state.isGenerating }
+    private var isProcessingSampleAudio: Bool { store.state.isProcessingSampleAudio }
+    private var recordingDuration: TimeInterval { store.state.recordingDuration }
+    private var downloadProgress: Double { store.state.downloadProgress }
+    private var currentPlaybackTime: Double { store.state.currentPlaybackTime }
+    private var showingEnhancedView: Bool { store.state.showingEnhancedView }
+    private var showingSpeakerView: Bool { store.state.showingSpeakerView }
+
     init(memo: Binding<Memo>, isRecording: Binding<Bool>) {
-        self._memo = memo
-        self._isRecording = isRecording
-        let transcriber = SpokenWordTranscriber(memo: memo)
-        speechTranscriber = transcriber
-        
-        // Initialize diarization manager with default settings
-        // Will be updated with actual settings in onAppear
-        let diarizationConfig = DiarizerConfig()
-        diarizationManager = DiarizationManager(config: diarizationConfig)
-        
-        // Recorder will be initialized in onAppear with proper modelContext
-        recorder = nil
-        
-        // Show enhanced view by default if summary exists
-        showingEnhancedView = memo.summary.wrappedValue != nil
+        self._store = StateObject(wrappedValue: TranscriptStore(memo: memo))
+        self._parentIsRecording = isRecording
     }
 
     var body: some View {
@@ -163,143 +131,37 @@ struct TranscriptView: View {
                 }
             #endif
         }
-        .onChange(of: isRecording) { oldValue, newValue in
-            guard newValue != oldValue else { return }
-            print("DEBUG [TranscriptView]: Recording state changed from \(oldValue) to \(newValue)")
-
-            if newValue == true {
-                print("DEBUG [TranscriptView]: Initiating recording start")
-                // Start recording timer
-                recordingStartTime = Date()
-                recordingDuration = 0
-                recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                    Task { @MainActor in
-                        if let startTime = recordingStartTime {
-                            recordingDuration = Date().timeIntervalSince(startTime)
-                        }
-                    }
-                }
-
-                // If restarting recording on an existing memo, reset the transcriber
-                if memo.isDone {
-                    memo.isDone = false
-                    speechTranscriber.reset()
-                    print("DEBUG [TranscriptView]: Reset transcriber for existing memo")
-                }
-                Task {
-                    do {
-                        try await recorder?.record()
-                        print("DEBUG [TranscriptView]: Recording started successfully")
-                    } catch let error as TranscriptionError {
-                        print(
-                            "DEBUG [TranscriptView]: Recording failed with TranscriptionError: \(error.descriptionString)"
-                        )
-                        await MainActor.run {
-                            isRecording = false
-                            enhancementError = "Recording failed: \(error.descriptionString)"
-                        }
-                    } catch {
-                        print("DEBUG [TranscriptView]: Recording failed with error: \(error)")
-                        await MainActor.run {
-                            isRecording = false
-                            enhancementError = "Recording failed: \(error.localizedDescription)"
-                        }
-                    }
-                }
-            } else {
-                print("DEBUG [TranscriptView]: Initiating recording stop")
-                // Stop recording timer
-                recordingTimer?.invalidate()
-                recordingTimer = nil
-                recordingStartTime = nil
-                recordingDuration = 0
-
-                Task {
-                    do {
-                        try await recorder?.stopRecording()
-                        print("DEBUG [TranscriptView]: Recording stopped successfully")
-                        // Generate title and summary after recording stops
-                        await generateTitleIfNeeded()
-                        await generateAIEnhancements()
-                    } catch {
-                        print("DEBUG [TranscriptView]: Error stopping recording: \(error)")
-                        await MainActor.run {
-                            enhancementError =
-                                "Error stopping recording: \(error.localizedDescription)"
-                        }
-                    }
-                }
-            }
+        .task {
+            await store.send(.onAppear(modelContext, settings))
         }
-        .onChange(of: isPlaying) {
-            handlePlayback()
-        }
-        .onAppear {
-            // Update diarization manager with settings
-            diarizationManager.config = settings.diarizationConfig()
-            
-            // Initialize recorder with proper modelContext
-            if recorder == nil {
-                recorder = Recorder(
-                    transcriber: speechTranscriber,
-                    memo: $memo,
-                    diarizationManager: diarizationManager,
-                    modelContext: modelContext
-                )
-            }
-            
-            // Connect the download progress
-            if let progress = speechTranscriber.downloadProgress {
-                let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-                    Task { @MainActor in
-                        if progress.isFinished {
-                            downloadProgress = 100.0
-                        } else {
-                            downloadProgress = progress.fractionCompleted * 100.0
-                        }
-                    }
-                }
-
-                // Store timer reference for cleanup
-                Task { @MainActor in
-                    // Auto-invalidate when progress is finished
-                    while !progress.isFinished && timer.isValid {
-                        try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
-                    }
-                    timer.invalidate()
-                }
-            }
-
-            // Auto-start recording if there's no existing transcript
-            if !memo.isDone && memo.text.characters.isEmpty {
-                // Reset transcriber to ensure clean state
-                speechTranscriber.reset()
-
-                if settings.useSampleAudioForNewMemos {
-                    Task {
-                        await transcribeSampleAudio()
-                    }
-                } else {
-                    // Use a small delay to ensure the view is fully loaded
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                        isRecording = true
-                    }
-                }
-            }
+        .onChange(of: isRecording) { _, newValue in
+            parentIsRecording = newValue
         }
         .onDisappear {
-            // Clean up timers
-            timer?.invalidate()
-            timer = nil
-            recordingTimer?.invalidate()
-            recordingTimer = nil
+            Task {
+                await store.send(.onDisappear)
+            }
         }
-        .alert("Enhancement Error", isPresented: .constant(enhancementError != nil)) {
+        .alert(
+            "Enhancement Error",
+            isPresented: Binding(
+                get: { store.state.enhancementError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        Task {
+                            await store.send(.errorAlertDismissed)
+                        }
+                    }
+                }
+            )
+        ) {
             Button("OK") {
-                enhancementError = nil
+                Task {
+                    await store.send(.errorAlertDismissed)
+                }
             }
         } message: {
-            if let error = enhancementError {
+            if let error = store.state.enhancementError {
                 Text(error)
             }
         }
@@ -375,11 +237,8 @@ struct TranscriptView: View {
         @ViewBuilder
         private var viewToggleButtonCompact: some View {
             Button {
-                withAnimation(.smooth(duration: 0.3)) {
-                    showingEnhancedView.toggle()
-                    if showingEnhancedView {
-                        showingSpeakerView = false
-                    }
+                Task {
+                    await store.send(.summaryToggleTapped)
                 }
             } label: {
                 Label(
@@ -397,11 +256,8 @@ struct TranscriptView: View {
         @ViewBuilder
         private var speakerViewToggleButtonCompact: some View {
             Button {
-                withAnimation(.smooth(duration: 0.3)) {
-                    showingSpeakerView.toggle()
-                    if showingSpeakerView {
-                        showingEnhancedView = false
-                    }
+                Task {
+                    await store.send(.speakerToggleTapped)
                 }
             } label: {
                 Label(
@@ -733,12 +589,8 @@ struct TranscriptView: View {
     @ViewBuilder
     private var viewToggleButton: some View {
         Button {
-            withAnimation(.smooth(duration: 0.3)) {
-                showingEnhancedView.toggle()
-                // Ensure only one special view is shown at a time
-                if showingEnhancedView {
-                    showingSpeakerView = false
-                }
+            Task {
+                await store.send(.summaryToggleTapped)
             }
         } label: {
             Label(
@@ -753,12 +605,8 @@ struct TranscriptView: View {
     @ViewBuilder
     private var speakerViewToggleButton: some View {
         Button {
-            withAnimation(.smooth(duration: 0.3)) {
-                showingSpeakerView.toggle()
-                // Ensure only one special view is shown at a time
-                if showingSpeakerView {
-                    showingEnhancedView = false
-                }
+            Task {
+                await store.send(.speakerToggleTapped)
             }
         } label: {
             Label(
@@ -793,8 +641,8 @@ struct TranscriptView: View {
     var liveRecordingView: some View {
         ScrollView {
             VStack(alignment: .leading) {
-                if speechTranscriber.finalizedTranscript.utf8.isEmpty
-                    && speechTranscriber.volatileTranscript.utf8.isEmpty
+                if store.state.finalizedTranscript.utf8.isEmpty
+                    && store.state.volatileTranscript.utf8.isEmpty
                 {
                     VStack(spacing: 20) {
                         // Recording indicator with glass effect
@@ -836,8 +684,8 @@ struct TranscriptView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         // Live transcript with glass container
                         Text(
-                            speechTranscriber.finalizedTranscript
-                                + speechTranscriber.volatileTranscript
+                            store.state.finalizedTranscript
+                                + store.state.volatileTranscript
                         )
                         .font(.body)
                         .lineSpacing(4)
@@ -920,107 +768,21 @@ extension TranscriptView {
         return isRecording ? "stop.circle.fill" : "record.circle.fill"
     }
 
-    @MainActor
-    private func transcribeSampleAudio() async {
-        guard !isProcessingSampleAudio else { return }
-        guard let recorder else {
-            enhancementError = "Sample transcription failed: recorder is not ready."
-            return
-        }
-        guard let sampleURL = Bundle.main.url(forResource: "sample", withExtension: "mp3") else {
-            enhancementError = "Sample transcription failed: sample.mp3 was not found in the app bundle."
-            return
-        }
-
-        isProcessingSampleAudio = true
-
-        do {
-            try await recorder.transcribeSampleAudio(from: sampleURL)
-            await generateTitleIfNeeded()
-            await generateAIEnhancements()
-        } catch let error as TranscriptionError {
-            enhancementError = "Sample transcription failed: \(error.descriptionString)"
-        } catch {
-            enhancementError = "Sample transcription failed: \(error.localizedDescription)"
-        }
-
-        isProcessingSampleAudio = false
-    }
-
-    func handlePlayback() {
-        guard memo.url != nil else {
-            return
-        }
-
-        if isPlaying {
-            Task {
-                await recorder?.playRecording()
-            }
-            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
-                Task { @MainActor in
-                    currentPlaybackTime = recorder?.playerNode?.currentTime ?? 0.0
-                }
-            }
-        } else {
-            Task {
-                await recorder?.stopPlaying()
-            }
-            currentPlaybackTime = 0.0
-            timer = nil
-        }
-    }
-
     func handleRecordingButtonTap() {
-        print("DEBUG [TranscriptView]: Recording button tapped - current state: \(isRecording)")
-        isRecording.toggle()
-        print("DEBUG [TranscriptView]: Recording state toggled to: \(isRecording)")
+        Task {
+            await store.send(.recordingButtonTapped)
+        }
     }
 
     func handlePlayButtonTap() {
-        isPlaying.toggle()
+        Task {
+            await store.send(.playButtonTapped)
+        }
     }
 
     func handleAIEnhanceButtonTap() {
         Task {
-            await generateAIEnhancements()
-        }
-    }
-
-    @MainActor
-    private func generateAIEnhancements() async {
-        isGenerating = true
-        enhancementError = nil
-
-        do {
-            try await memo.generateAIEnhancements()
-            // Automatically show the enhanced view after successful generation
-            withAnimation(.smooth(duration: 0.3)) {
-                showingEnhancedView = true
-            }
-        } catch let error as FoundationModelsError {
-            enhancementError = error.localizedDescription
-        } catch {
-            enhancementError = "Failed to generate AI enhancements: \(error.localizedDescription)"
-        }
-
-        isGenerating = false
-    }
-
-    @MainActor
-    private func generateTitleIfNeeded() async {
-        // Only generate title if we have content and the current title is generic
-        guard !memo.text.characters.isEmpty,
-            memo.title == "New Memo" || memo.title.isEmpty
-        else {
-            return
-        }
-
-        do {
-            let suggestedTitle = try await memo.suggestedTitle() ?? memo.title
-            memo.title = suggestedTitle
-        } catch {
-            print("Error generating title: \(error)")
-            // Keep the existing title if generation fails
+            await store.send(.aiEnhanceButtonTapped)
         }
     }
 
