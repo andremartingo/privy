@@ -1,0 +1,14 @@
+.DS_Store
+.DS_Store
+pkstudio.xcodeproj/project.xcworkspace/xcuserdata/andremartingo.xcuserdatad/UserInterfaceState.xcuserstate
+fastlane/report.xml
+pkstudio.ipa
+pkstudio.app.dSYM.zip
+App.ipa
+App.app.dSYM.zip
+pkstudio.xcodeproj/xcuserdata/andremartingo.xcuserdatad/xcschemes/xcschememanagement.plist
+ui-debug.log
+functions/firebase-debug.log
+firebase-debug.log
+build
+design-mockups
