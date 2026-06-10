@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Privy</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Privy needs microphone access to transcribe your audio.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Privy uses on-device speech recognition to create transcripts.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

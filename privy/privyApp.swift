@@ -1,18 +1,15 @@
-//
-//  privyApp.swift
-//  privy
-//
-//  Created by André Martingo on 09/06/2026.
-//
-
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 @main
 struct privyApp: App {
+    @State private var settings = AppSettings()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Memo.self,
+            Speaker.self,
+            SpeakerSegment.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -26,7 +23,15 @@ struct privyApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(settings)
+                .preferredColorScheme(settings.colorScheme)
         }
         .modelContainer(sharedModelContainer)
+
+        #if os(macOS)
+            Settings {
+                SettingsView(settings: settings)
+            }
+        #endif
     }
 }
