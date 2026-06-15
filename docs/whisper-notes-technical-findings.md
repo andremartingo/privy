@@ -81,6 +81,226 @@ Audio uploaded -> cloud GPUs process it -> transcripts stored in cloud -> user a
 
 For `privy`, the product implication is clear: the technical architecture itself is the marketing claim. We cannot credibly claim Whisper Notes-style privacy if any default transcription, summary, analytics, crash logging, or sync path uploads user audio or transcript text.
 
+## Publicly Inferred Architecture
+
+This section describes the architecture that can be inferred from Whisper Notes' public website, App Store listing, FAQ, and privacy policy. It is not a reverse-engineered view of their private codebase. Exact implementation details, storage schema, model packaging, runtime libraries, and internal app modules are unknown.
+
+### Core Local Transcription Flow
+
+The public claims imply this flow:
+
+```text
+User records or imports media
+    -> app stores source audio/video locally
+    -> app selects a local speech model
+    -> app prepares model/runtime on device
+    -> app runs transcription locally
+    -> app streams partial text to UI during processing
+    -> app persists transcript locally
+    -> user exports or shares manually
+```
+
+Important architectural constraints:
+
+- Transcription is file/job based, not live transcription during recording.
+- Partial text appears while the completed recording or imported file is being processed.
+- The app must keep enough local state to restart or re-transcribe after iOS background interruption.
+- Audio and transcript data stay in local app storage unless the user explicitly exports or shares.
+
+### Capture Inputs
+
+Whisper Notes appears to support multiple input surfaces:
+
+- In-app voice recording.
+- File import for audio files.
+- File import or share handling for video files.
+- Voice Memos share flow.
+- WhatsApp/media share flow.
+- iOS Lock Screen widget recording.
+- iOS Control Center capture.
+- iOS Action Button trigger.
+- Siri/App Shortcuts trigger.
+- Mac Fn-key dictation.
+- Mac meeting recording for meeting apps.
+
+For `privy`, these should be treated as different front doors into the same internal pipeline:
+
+```text
+Capture surface -> local media asset -> transcription job -> transcript record
+```
+
+Do not build separate transcription logic per surface.
+
+### Model Runtime Layer
+
+The public pages describe multiple model families: Whisper, Parakeet, Qwen3-ASR, and/or SenseVoice depending on page and platform. The exact implementation is not public, but the architecture implies a model registry with per-platform compatibility.
+
+Likely responsibilities of this layer:
+
+- Expose available models for the current device.
+- Track model-specific language support.
+- Select defaults by platform and language.
+- Enforce minimum hardware requirements.
+- Prepare/load model files.
+- Run local inference.
+- Emit text and timestamp segments.
+- Report progress and failures.
+
+For `privy`, model choice should be represented as app data, not hard-coded into views.
+
+### Local Persistence Layer
+
+Whisper Notes claims recordings and transcripts remain on-device and do not sync through their servers. That implies local persistence for:
+
+- recordings
+- imported media references or local copies
+- transcript text
+- timestamped transcript data
+- language/model metadata
+- exportable files or generated export content
+- local AI outputs on Mac, such as titles, summaries, cleanup, and chat context
+
+Unknowns:
+
+- Whether recordings are stored in app container, shared app group, document storage, or a custom database.
+- Whether transcripts are stored as files, SQLite/Core Data/SwiftData records, or another local database.
+- Whether source media is copied or referenced in place after import.
+
+### Export And Sharing Layer
+
+Publicly stated export formats include TXT, SRT, and VTT. App Store copy also emphasizes subtitles and timestamped exports.
+
+The architecture must therefore preserve enough timing data to generate subtitle files:
+
+```text
+Transcript segments -> format renderer -> local output file -> share sheet/save panel
+```
+
+For `privy`, export generation should be deterministic and testable. It should not depend on rendered SwiftUI text.
+
+### Mac Fn-Key Dictation Flow
+
+Whisper Notes' Mac product claims system-wide dictation by holding Fn in any app. That implies a distinct flow from memo transcription:
+
+```text
+Global hotkey down
+    -> begin local recording
+Global hotkey up
+    -> stop recording
+    -> local transcription
+    -> optional cleanup
+    -> insert text into currently focused app
+```
+
+Likely architecture requirements:
+
+- global hotkey listener
+- microphone permission
+- Accessibility permission for text insertion
+- active focused-app/text-field targeting
+- background/menu-bar process behavior
+- direct Mac distribution if App Store review blocks required permissions
+
+For `privy`, this should be a separate feature module built on top of the same transcription client.
+
+### Mac Meeting Recording Flow
+
+The public FAQ claims meeting recording on Mac with auto-detection for Zoom, Teams, Google Meet, and similar platforms.
+
+An inferred flow:
+
+```text
+Meeting app/browser detected
+    -> user-consented recording starts
+    -> microphone/system or meeting audio captured locally
+    -> local recording saved
+    -> transcription job runs locally
+    -> transcript/summary stored locally
+```
+
+Unknowns:
+
+- Whether system audio capture is implemented through ScreenCaptureKit, virtual audio routing, app-specific capture, or another mechanism.
+- Whether meeting detection is process-based, window-title based, browser URL based, calendar based, or manual.
+- Whether both local microphone and remote participant audio are captured.
+- What permission prompts and legal consent flows are shown.
+
+### iOS Extension And Shortcut Flow
+
+The public pages mention Lock Screen widget, Control Center, Action Button, Siri, and Live Activities. A plausible architecture is:
+
+```text
+Widget/App Intent/Shortcut
+    -> launch or wake app into recording mode
+    -> store recording in app or app group container
+    -> show Live Activity while recording
+    -> return to app for transcription if needed
+```
+
+Important iOS limitation:
+
+- Their FAQ says transcription stops when switching apps because iOS limits background GPU usage. This means the app likely performs heavy transcription only while foregrounded or after the user returns.
+
+For `privy`, this implies a resumable job model and clear "tap to re-transcribe" behavior.
+
+### Local AI Layer
+
+Whisper Notes claims local AI features on Mac:
+
+- cleanup
+- titles
+- summaries
+- transcript chat
+
+The likely flow:
+
+```text
+Completed transcript
+    -> optional local cleanup model
+    -> optional title/summary generation
+    -> optional local retrieval/chat over transcript text
+```
+
+For `privy`, this is already partially covered by `FoundationModelsClient`, but the app should preserve original and cleaned transcripts separately.
+
+### Network Boundary
+
+The privacy policy and product pages imply a strict boundary:
+
+```text
+Default transcription path: no network
+Default storage path: local only
+Sharing/export path: user initiated
+Analytics/tracking: none
+Sync: none through Whisper Notes servers
+```
+
+For `privy`, equivalent claims require a release audit:
+
+- inspect dependencies for network behavior
+- remove analytics/tracking
+- verify no crash logs include transcript/audio data
+- test transcription while fully offline
+- document exactly what leaves the device, if anything
+
+### Unknown Internals
+
+The following cannot be confirmed from public pages:
+
+- Exact speech inference runtime.
+- Exact model formats and quantization.
+- Whether models are bundled or downloaded after install.
+- Database/storage implementation.
+- Segment schema.
+- Audio preprocessing chain.
+- Voice activity detection implementation.
+- Silence skipping implementation.
+- Punctuation and cleanup model implementation.
+- Transcript chat retrieval method.
+- Exact meeting recording capture API.
+- Exact Mac hotkey and text insertion implementation.
+- How they validate "zero network requests" in production.
+
 ## Current Privy Comparison
 
 Current `privy` already has several pieces that map to this category:
@@ -121,6 +341,102 @@ Whisper Notes' own pages contain some model naming differences:
 - The App Store text says multiple models such as Parakeet and Whisper, without fully matching every website claim.
 
 For our implementation, the lesson is not to copy their model matrix. The right path is to design a model abstraction that can support multiple engines and expose only the models we actually ship and test.
+
+## Public Model Findings
+
+Whisper Notes appears to use a multi-model strategy rather than one speech model for every language and platform. The exact internal implementation is unknown, but the public model positioning is clear enough to guide `privy`'s architecture.
+
+### Claimed Speech Models
+
+| Model | Publicly claimed role | Platform notes | Language notes | Product implication |
+| --- | --- | --- | --- | --- |
+| Parakeet / Parakeet V3 | Fast default model, especially for English and European languages | Claimed as default on iPhone and Mac in the home FAQ | Public pages mention 25 European languages and low English WER | Use as the "fast/default" local model profile |
+| Whisper Large V3 Turbo | Broad multilingual, high-accuracy general model | Claimed on Mac; App Store suggests Whisper is available on iOS too | 99 or 100+ languages depending on page | Use as the broad-language model profile |
+| Qwen3-ASR | CJK-focused speech recognition | Mentioned on the Otter comparison page | Chinese, Japanese, Korean plus additional languages | Use as a possible CJK-optimized model profile |
+| SenseVoice | CJK/Cantonese-focused speech recognition | Mentioned on the home FAQ for Mac | Chinese, Japanese, Korean, Cantonese | Another possible CJK-optimized profile; conflicts with Qwen3-ASR claim |
+| Local LLM, described as Gemma 4 | Cleanup, title, summary, transcript questions | Claimed on Mac in the Otter comparison page | Not a speech model; used after transcription | Treat as a post-processing model, separate from ASR |
+
+### Inferred Model Selection Logic
+
+The public pages imply this selection strategy:
+
+```text
+If the user wants fastest/default transcription:
+    use Parakeet / Parakeet V3
+
+If the user needs broad multilingual support:
+    use Whisper Large V3 Turbo or another Whisper model
+
+If the user is transcribing Chinese, Japanese, Korean, or Cantonese:
+    use CJK-specialized model such as Qwen3-ASR or SenseVoice
+
+If transcription quality is poor:
+    let the user switch models and manually select language
+```
+
+The app also appears to remember language preferences per model. That matters because model-specific language support differs; a single global language setting is not enough.
+
+### Inferred Runtime Behavior
+
+Public claims imply:
+
+- Models run locally on the device.
+- On iPhone, inference depends heavily on Neural Engine/GPU-class hardware.
+- On Mac, the direct-download app targets Apple Silicon and recommends 8 GB+ RAM.
+- Transcription runs after recording or import completes.
+- Partial transcript text streams into the UI while the local model processes the completed audio file.
+- iOS transcription can stop when the app backgrounds because iOS limits background GPU use.
+- Large or higher-quality models may be unsuitable for older iPhones.
+
+### Unknown Model Details
+
+These details are not knowable from public pages:
+
+- Whether models are Core ML, MLX, ONNX, GGML/GGUF, custom Metal, or another runtime format.
+- Whether Whisper is implemented through `whisper.cpp`, WhisperKit, a custom runtime, or another engine.
+- Whether models are bundled in the app, downloaded after install, or both.
+- Exact model quantization.
+- Exact memory requirements per model.
+- Exact model file sizes.
+- Exact fallback behavior when a model fails.
+- Whether language detection is shared across engines or implemented per model.
+- Whether punctuation and cleanup happen inside ASR decoding or as a separate post-processing step.
+
+### Implication For Privy
+
+`privy` should not hard-code a single transcription engine. We need a model registry and engine abstraction:
+
+```swift
+struct SpeechModel: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var displayName: String
+    var engine: SpeechEngine
+    var supportedLanguageCodes: [String]
+    var defaultLanguageCode: String?
+    var recommendedUse: ModelUseCase
+    var minimumDeviceClass: DeviceClass
+    var approximateDiskSize: Int64
+    var supportsLanguageDetection: Bool
+    var supportsStreamingOutput: Bool
+    var supportsTimestamps: Bool
+    var supportsTranslation: Bool
+}
+
+enum SpeechEngine: String, Codable, Sendable {
+    case whisper
+    case parakeet
+    case senseVoice
+    case qwenASR
+    case appleSpeech
+}
+```
+
+Recommended first implementation:
+
+1. Ship one proven broad-language local model first.
+2. Persist transcript segments and model metadata.
+3. Add model switching only after the single-model pipeline is stable.
+4. Add CJK-specific model support after import/export and job retry are reliable.
 
 ## Feature Implications For Privy
 
@@ -574,4 +890,3 @@ Manual QA:
 ## Recommended Next Step
 
 The next engineering step is the same as the Aiko investigation but with a stronger model-management requirement: implement a narrow `TranscriptionClient` spike that transcribes `privy/sample.mp3` from a local model and returns timestamped segments. Once that works, design model selection and job state around the actual runtime constraints instead of starting with UI.
-

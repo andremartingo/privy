@@ -280,6 +280,8 @@ struct AboutSettingsView: View {
                         SettingsInfoRow(label: "Version", value: "1.0.0")
                         SettingsInfoRow(label: "Build", value: "1.0.0 (1)")
                         SettingsInfoRow(label: "Platform", value: platformName)
+                        SettingsInfoRow(label: "Transcription Model", value: "Parakeet TDT v3")
+                        SettingsInfoRow(label: "Model License", value: "CC BY 4.0")
                     }
                 }
                 .padding()

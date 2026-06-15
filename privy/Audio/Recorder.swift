@@ -58,14 +58,6 @@ class Recorder {
             throw error
         }
 
-        do {
-            try await transcriber.setUpTranscriber()
-            print("DEBUG [Recorder]: Transcriber setup completed")
-        } catch {
-            print("DEBUG [Recorder]: Transcriber setup failed: \(error)")
-            throw error
-        }
-
         // Initialize diarization manager
         do {
             try await diarizationManager.initialize()
@@ -75,16 +67,12 @@ class Recorder {
             // Continue without diarization if it fails
         }
 
-        print("DEBUG [Recorder]: Audio session and transcriber set up successfully")
+        print("DEBUG [Recorder]: Audio session set up successfully")
 
         // Create audio stream and process it
         do {
             let audioStreamSequence = try await audioStream()
             for await audioData in audioStreamSequence {
-                // Process the buffer for transcription
-                try await self.transcriber.streamAudioToTranscriber(audioData.buffer)
-                
-                // Also process for diarization
                 await self.diarizationManager.processAudioBuffer(audioData.buffer)
             }
         } catch {
@@ -100,14 +88,6 @@ class Recorder {
         await MainActor.run {
             memo.url.wrappedValue = sampleURL
             memo.isDone.wrappedValue = false
-        }
-
-        do {
-            try await transcriber.setUpTranscriber()
-            print("DEBUG [Recorder]: Transcriber setup completed for sample audio")
-        } catch {
-            print("DEBUG [Recorder]: Sample transcriber setup failed: \(error)")
-            throw error
         }
 
         do {
@@ -137,11 +117,10 @@ class Recorder {
             try sampleFile.read(into: buffer)
             guard buffer.frameLength > 0 else { break }
 
-            try await transcriber.streamAudioToTranscriber(buffer)
             await diarizationManager.processAudioBuffer(buffer)
         }
 
-        try await transcriber.finishTranscribing()
+        try await transcriber.transcribeAudioFile(sampleURL)
         await processFinalDiarization()
 
         await MainActor.run {
@@ -151,6 +130,7 @@ class Recorder {
         print("DEBUG [Recorder]: Sample audio transcription completed")
     }
 
+    @MainActor
     func stopRecording() async throws {
         print("DEBUG [Recorder]: Stopping recording session")
 
@@ -163,19 +143,13 @@ class Recorder {
         // Remove tap safely
         recordingEngine.inputNode.removeTap(onBus: 0)
 
-        // Update memo completion status - capture specific binding to avoid sending self
-        let memoIsDoneBinding = memo.isDone
-        await MainActor.run {
-            memoIsDoneBinding.wrappedValue = true
-        }
-
         // Clean up continuation
         outputContinuation?.finish()
         outputContinuation = nil
         print("DEBUG [Recorder]: Audio stream continuation finished")
 
         do {
-            try await transcriber.finishTranscribing()
+            try await transcriber.transcribeAudioFile(url)
             print("DEBUG [Recorder]: Transcription finalized")
         } catch {
             print("DEBUG [Recorder]: Error finalizing transcription: \(error)")
@@ -184,6 +158,12 @@ class Recorder {
 
         // Process final diarization
         await processFinalDiarization()
+
+        // Update memo completion status - capture specific binding to avoid sending self
+        let memoIsDoneBinding = memo.isDone
+        await MainActor.run {
+            memoIsDoneBinding.wrappedValue = true
+        }
 
         print("DEBUG [Recorder]: Recording stopped and transcription finalized")
     }

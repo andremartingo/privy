@@ -1,4 +1,5 @@
 import Dependencies
+import FluidAudio
 import Foundation
 import Speech
 import SwiftUI
@@ -57,11 +58,25 @@ private final class SpeechTranscriptionService {
 @Observable
 @MainActor
 final class SpokenWordTranscriber {
+    private enum ParakeetV3 {
+        static let bundledModelDirectory = "parakeet-tdt-0.6b-v3"
+        static let bundledModelSubdirectory = "ModelAssets"
+        static let requiredBundleEntries = [
+            "Preprocessor.mlmodelc",
+            "Encoder.mlmodelc",
+            "Decoder.mlmodelc",
+            "JointDecisionv3.mlmodelc",
+            "parakeet_vocab.json",
+        ]
+    }
+
     private let inputSequence: AsyncStream<AnalyzerInput>
     private let inputBuilder: AsyncStream<AnalyzerInput>.Continuation
     private var transcriber: SpeechTranscriber?
     private var analyzer: SpeechAnalyzer?
     private var recognizerTask: Task<(), any Error>?
+    private var parakeetManager: AsrManager?
+    private var parakeetLoadTask: Task<AsrManager, any Error>?
 
     static let green = Color(red: 0.36, green: 0.69, blue: 0.55).opacity(0.8)  // #5DAF8D
 
@@ -70,6 +85,7 @@ final class SpokenWordTranscriber {
 
     let converter = BufferConverter()
     var downloadProgress: Progress?
+    var modelPreparationProgress = 0.0
 
     let memo: Binding<Memo>
 
@@ -93,12 +109,168 @@ final class SpokenWordTranscriber {
 
     init(memo: Binding<Memo>) {
         print(
-            "[Transcriber DEBUG]: Initializing SpokenWordTranscriber with locale: \(SpokenWordTranscriber.locale.identifier)"
+            "[Transcriber DEBUG]: Initializing local Parakeet v3 transcriber with locale hint: \(SpokenWordTranscriber.locale.identifier)"
         )
         self.memo = memo
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         self.inputSequence = stream
         self.inputBuilder = continuation
+    }
+
+    func transcribeAudioFile(_ url: URL) async throws {
+        let manager = try await prepareParakeetManager()
+        modelPreparationProgress = 100
+
+        volatileTranscript = AttributedString("Transcribing locally...")
+        volatileTranscript.foregroundColor = .purple.opacity(0.5)
+        onTranscriptChanged?(finalizedTranscript, volatileTranscript)
+
+        var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(url, decoderState: &decoderState)
+        let transcript = AttributedString(result.text)
+
+        finalizedTranscript = transcript
+        volatileTranscript = ""
+        memo.text.wrappedValue = transcript
+        onTranscriptChanged?(finalizedTranscript, volatileTranscript)
+
+        print(
+            "[Transcriber DEBUG]: Parakeet v3 transcription completed in \(result.processingTime)s, rtfx: \(result.rtfx)"
+        )
+    }
+
+    private func prepareParakeetManager() async throws -> AsrManager {
+        if let parakeetManager {
+            return parakeetManager
+        }
+
+        if let parakeetLoadTask {
+            let manager = try await parakeetLoadTask.value
+            self.parakeetManager = manager
+            return manager
+        }
+
+        modelPreparationProgress = 0
+        let loadTask = Task<AsrManager, any Error> {
+            let models = try await Self.loadParakeetV3Models()
+            return AsrManager(config: Self.parakeetConfig, models: models)
+        }
+        parakeetLoadTask = loadTask
+
+        do {
+            let manager = try await loadTask.value
+            parakeetManager = manager
+            parakeetLoadTask = nil
+            return manager
+        } catch {
+            parakeetLoadTask = nil
+            throw error
+        }
+    }
+
+    nonisolated private static var parakeetConfig: ASRConfig {
+        ASRConfig(
+            sampleRate: 16_000,
+            parallelChunkConcurrency: 4,
+            streamingEnabled: true,
+            melChunkContext: false
+        )
+    }
+
+    nonisolated private static func loadParakeetV3Models() async throws -> AsrModels {
+        if let bundledModelURL = try bundledParakeetV3ModelURL() {
+            print("[Transcriber DEBUG]: Loading bundled Parakeet v3 model from \(bundledModelURL.path)")
+            return try await AsrModels.load(
+                from: bundledModelURL,
+                configuration: AsrModels.defaultConfiguration(),
+                version: .v3,
+                encoderPrecision: .int8
+            )
+        }
+
+        print("[Transcriber DEBUG]: Bundled Parakeet v3 model not found; using FluidAudio cache")
+        return try await AsrModels.downloadAndLoad(
+            configuration: AsrModels.defaultConfiguration(),
+            version: .v3,
+            encoderPrecision: .int8
+        )
+    }
+
+    nonisolated private static func bundledParakeetV3ModelURL() throws -> URL? {
+        if let nestedURL = Bundle.main.url(
+            forResource: ParakeetV3.bundledModelDirectory,
+            withExtension: nil,
+            subdirectory: ParakeetV3.bundledModelSubdirectory
+        ),
+            AsrModels.modelsExist(
+                at: nestedURL,
+                version: .v3,
+                encoderPrecision: .int8
+            )
+        {
+            return nestedURL
+        }
+
+        guard let resourceURL = Bundle.main.resourceURL,
+            bundleRootContainsParakeetV3Model(resourceURL)
+        else {
+            return nil
+        }
+
+        let linkedURL = try prepareBundledParakeetV3Links(from: resourceURL)
+        guard AsrModels.modelsExist(
+            at: linkedURL,
+            version: .v3,
+            encoderPrecision: .int8
+        ) else {
+            return nil
+        }
+
+        return linkedURL
+    }
+
+    nonisolated private static func bundleRootContainsParakeetV3Model(_ rootURL: URL) -> Bool {
+        ParakeetV3.requiredBundleEntries.allSatisfy { entry in
+            FileManager.default.fileExists(atPath: rootURL.appendingPathComponent(entry).path)
+        }
+    }
+
+    nonisolated private static func prepareBundledParakeetV3Links(from rootURL: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let appSupportURL = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let linksRootURL = appSupportURL.appendingPathComponent("BundledModelLinks", isDirectory: true)
+        let linkedModelURL = linksRootURL.appendingPathComponent(
+            ParakeetV3.bundledModelDirectory,
+            isDirectory: true
+        )
+
+        if AsrModels.modelsExist(at: linkedModelURL, version: .v3, encoderPrecision: .int8) {
+            return linkedModelURL
+        }
+
+        if fileManager.fileExists(atPath: linkedModelURL.path) {
+            try fileManager.removeItem(at: linkedModelURL)
+        }
+
+        try fileManager.createDirectory(at: linkedModelURL, withIntermediateDirectories: true)
+
+        for entry in ParakeetV3.requiredBundleEntries {
+            let sourceURL = rootURL.appendingPathComponent(entry)
+            let destinationURL = linkedModelURL.appendingPathComponent(entry)
+
+            do {
+                try fileManager.createSymbolicLink(at: destinationURL, withDestinationURL: sourceURL)
+            } catch {
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            }
+        }
+
+        return linkedModelURL
     }
 
     func setUpTranscriber() async throws {
@@ -213,6 +385,7 @@ final class SpokenWordTranscriber {
         print("[Transcriber DEBUG]: Resetting transcriber - clearing transcripts")
         volatileTranscript = ""
         finalizedTranscript = ""
+        modelPreparationProgress = 0
         onTranscriptChanged?(finalizedTranscript, volatileTranscript)
     }
 }
