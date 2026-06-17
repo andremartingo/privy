@@ -1,11 +1,15 @@
 import CasePaths
 import Combine
+import Dependencies
 import Foundation
 import SwiftData
 
 @MainActor
 final class ContentStore: ObservableObject {
     @Published var state: State
+
+    @Dependency(\.audioImportClient)
+    private var audioImportClient
 
     init(initialState: State = .init()) {
         self.state = initialState
@@ -53,6 +57,24 @@ final class ContentStore: ObservableObject {
 
         case .settingsDismissed:
             state.destination = nil
+
+        case let .importMedia(url, modelContext):
+            do {
+                let importedAudio = try await audioImportClient.importMedia(url)
+                let memo = Memo.imported(importedAudio)
+                modelContext.insert(memo)
+                state.selection = memo
+                state.currentMemo = memo
+                state.importError = nil
+            } catch {
+                state.importError = error.localizedDescription
+            }
+
+        case .importErrorDismissed:
+            state.importError = nil
+
+        case let .importFailed(message):
+            state.importError = message
         }
     }
 }
@@ -62,6 +84,7 @@ extension ContentStore {
         var selection: Memo?
         var currentMemo = Memo.blank()
         var isRecording = false
+        var importError: String?
         var destination: Destination?
 
         @CasePathable
@@ -73,6 +96,7 @@ extension ContentStore {
             lhs.selection?.persistentModelID == rhs.selection?.persistentModelID
                 && lhs.currentMemo.persistentModelID == rhs.currentMemo.persistentModelID
                 && lhs.isRecording == rhs.isRecording
+                && lhs.importError == rhs.importError
                 && lhs.destination == rhs.destination
         }
     }
@@ -86,6 +110,9 @@ extension ContentStore {
         case recordingChanged(Bool)
         case settingsTapped
         case settingsDismissed
+        case importMedia(URL, ModelContext)
+        case importFailed(String)
+        case importErrorDismissed
 
         var description: String {
             switch self {
@@ -105,6 +132,12 @@ extension ContentStore {
                 return "settingsTapped"
             case .settingsDismissed:
                 return "settingsDismissed"
+            case .importMedia:
+                return "importMedia"
+            case .importErrorDismissed:
+                return "importErrorDismissed"
+            case .importFailed:
+                return "importFailed"
             }
         }
     }

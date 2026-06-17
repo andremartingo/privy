@@ -95,6 +95,18 @@ struct TranscriptView: View {
                             enhanceButton
                         }
 
+                        ToolbarItem {
+                            exportMenu
+                        }
+
+                        if let exportedURL = store.state.exportedURL {
+                            ToolbarItem {
+                                ShareLink(item: exportedURL) {
+                                    Label("Share Export", systemImage: "square.and.arrow.up")
+                                }
+                            }
+                        }
+
                         // View toggle buttons
                         if memo.summary != nil {
                             ToolbarItem {
@@ -192,6 +204,8 @@ struct TranscriptView: View {
 
                     // AI enhance button
                     enhanceButtonCompact
+
+                    exportMenuCompact
                 }
             }
             .padding(.horizontal, 20)
@@ -716,6 +730,8 @@ struct TranscriptView: View {
                         .padding(.horizontal, 12)
                 #endif
 
+                transcriptStatusView
+
                 Text(memo.textBrokenUpByParagraphs())
                     .font(.body)
                     .lineSpacing(4)
@@ -731,6 +747,104 @@ struct TranscriptView: View {
             }
         }
         .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    @ViewBuilder
+    private var transcriptStatusView: some View {
+        HStack(spacing: 8) {
+            Label(memo.transcriptionStatus.displayName, systemImage: statusIcon)
+                .font(.caption)
+                .foregroundStyle(statusColor)
+
+            if memo.transcriptionStatus == .transcribing || memo.transcriptionStatus == .preparing {
+                ProgressView(value: memo.transcriptionProgress)
+                    .frame(maxWidth: 120)
+            }
+
+            if let exportedURL = store.state.exportedURL {
+                ShareLink(item: exportedURL) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.caption)
+                }
+            }
+        }
+        #if os(iOS)
+            .padding(.horizontal, 16)
+        #else
+            .padding(.horizontal, 12)
+        #endif
+    }
+
+    private var statusIcon: String {
+        switch memo.transcriptionStatus {
+        case .pending:
+            return "clock"
+        case .recording:
+            return "mic.fill"
+        case .preparing:
+            return "gearshape"
+        case .transcribing:
+            return "waveform"
+        case .completed:
+            return "checkmark.circle"
+        case .failed:
+            return "exclamationmark.triangle"
+        case .cancelled:
+            return "xmark.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch memo.transcriptionStatus {
+        case .completed:
+            return .green
+        case .failed, .cancelled:
+            return .red
+        case .recording, .preparing, .transcribing:
+            return .blue
+        case .pending:
+            return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var exportMenu: some View {
+        Menu {
+            ForEach(ExportFormat.allCases) { format in
+                Button {
+                    Task {
+                        await store.send(.exportTapped(format))
+                    }
+                } label: {
+                    Text(format.displayName)
+                }
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .disabled(memo.transcriptText.isEmpty && memo.text.characters.isEmpty)
+    }
+
+    @ViewBuilder
+    private var exportMenuCompact: some View {
+        Menu {
+            ForEach(ExportFormat.allCases) { format in
+                Button {
+                    Task {
+                        await store.send(.exportTapped(format))
+                    }
+                } label: {
+                    Text(format.displayName)
+                }
+            }
+        } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+                .font(.body)
+                .fontWeight(.medium)
+        }
+        .buttonStyle(.glass)
+        .controlSize(.large)
+        .disabled(memo.transcriptText.isEmpty && memo.text.characters.isEmpty)
     }
 
     private var progressView: some View {

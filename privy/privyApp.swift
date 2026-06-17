@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftData
 import SwiftUI
 
@@ -5,9 +6,14 @@ import SwiftUI
 struct privyApp: App {
     @State private var settings = AppSettings()
 
+    init() {
+        PrivyShortcuts.updateAppShortcutParameters()
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Memo.self,
+            TranscriptSegment.self,
             Speaker.self,
             SpeakerSegment.self,
         ])

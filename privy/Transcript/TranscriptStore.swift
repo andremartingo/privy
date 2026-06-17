@@ -16,6 +16,8 @@ final class TranscriptStore: ObservableObject {
     private var foundationModelsClient
     @Dependency(\.speechTranscriptionClient)
     private var speechTranscriptionClient
+    @Dependency(\.exportClient)
+    private var exportClient
 
     let memo: Binding<Memo>
     let speechTranscriber: SpokenWordTranscriber
@@ -27,6 +29,7 @@ final class TranscriptStore: ObservableObject {
     private var playbackTimer: Timer?
     private var recordingTimer: Timer?
     private var recordingTask: Task<Void, Never>?
+    private var settings: AppSettings?
 
     init(memo: Binding<Memo>, initialState: State = .init()) {
         @Dependency(\.speechTranscriptionClient)
@@ -67,6 +70,12 @@ final class TranscriptStore: ObservableObject {
         case .aiEnhanceButtonTapped:
             await generateAIEnhancements()
 
+        case let .exportTapped(format):
+            await export(format: format)
+
+        case .exportDismissed:
+            state.exportedURL = nil
+
         case .summaryToggleTapped:
             withAnimation(.smooth(duration: 0.3)) {
                 state.showingEnhancedView.toggle()
@@ -86,11 +95,13 @@ final class TranscriptStore: ObservableObject {
         case .errorAlertDismissed:
             state.enhancementError = nil
             state.destination = nil
+            state.exportError = nil
         }
     }
 
     private func configure(modelContext: ModelContext, settings: AppSettings) {
         self.modelContext = modelContext
+        self.settings = settings
         diarizationManager.config = settings.diarizationConfig()
 
         if recorder == nil {
@@ -107,6 +118,7 @@ final class TranscriptStore: ObservableObject {
 
     private func autoStartIfNeeded(settings: AppSettings) async {
         guard !memo.wrappedValue.isDone, memo.wrappedValue.text.characters.isEmpty else {
+            syncPersistedTranscriptIfNeeded()
             return
         }
 
@@ -114,6 +126,8 @@ final class TranscriptStore: ObservableObject {
 
         if settings.useSampleAudioForNewMemos {
             await transcribeSampleAudio()
+        } else if let existingURL = memo.wrappedValue.recordingURL ?? memo.wrappedValue.url {
+            await transcribeExistingAudio(from: existingURL)
         } else {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
@@ -160,9 +174,12 @@ final class TranscriptStore: ObservableObject {
 
         do {
             try await recorder?.stopRecording()
+            persistCurrentTranscriptSegment()
             await generateTitleIfNeeded()
             await generateAIEnhancements()
         } catch {
+            memo.wrappedValue.transcriptionStatus = .failed
+            memo.wrappedValue.errorMessage = error.localizedDescription
             setError("Error stopping recording: \(error.localizedDescription)")
         }
     }
@@ -182,12 +199,44 @@ final class TranscriptStore: ObservableObject {
 
         do {
             try await recorder.transcribeSampleAudio(from: sampleURL)
+            persistCurrentTranscriptSegment()
             await generateTitleIfNeeded()
             await generateAIEnhancements()
         } catch let error as TranscriptionError {
+            memo.wrappedValue.transcriptionStatus = .failed
+            memo.wrappedValue.errorMessage = error.descriptionString
             setError("Sample transcription failed: \(error.descriptionString)")
         } catch {
+            memo.wrappedValue.transcriptionStatus = .failed
+            memo.wrappedValue.errorMessage = error.localizedDescription
             setError("Sample transcription failed: \(error.localizedDescription)")
+        }
+
+        state.isProcessingSampleAudio = false
+    }
+
+    private func transcribeExistingAudio(from url: URL) async {
+        guard !state.isProcessingSampleAudio else { return }
+        guard let recorder else {
+            setError("Transcription failed: recorder is not ready.")
+            return
+        }
+
+        state.isProcessingSampleAudio = true
+
+        do {
+            try await recorder.transcribeAudioFile(from: url)
+            persistCurrentTranscriptSegment()
+            await generateTitleIfNeeded()
+            await generateAIEnhancements()
+        } catch let error as TranscriptionError {
+            memo.wrappedValue.transcriptionStatus = .failed
+            memo.wrappedValue.errorMessage = error.descriptionString
+            setError("Transcription failed: \(error.descriptionString)")
+        } catch {
+            memo.wrappedValue.transcriptionStatus = .failed
+            memo.wrappedValue.errorMessage = error.localizedDescription
+            setError("Transcription failed: \(error.localizedDescription)")
         }
 
         state.isProcessingSampleAudio = false
@@ -235,6 +284,16 @@ final class TranscriptStore: ObservableObject {
         }
 
         state.isGenerating = false
+    }
+
+    private func export(format: ExportFormat) async {
+        state.exportError = nil
+        do {
+            state.exportedURL = try await exportClient.export(memo.wrappedValue, format)
+        } catch {
+            state.exportError = error.localizedDescription
+            state.destination = .errorAlert
+        }
     }
 
     private func generateTitleIfNeeded() async {
@@ -296,6 +355,72 @@ final class TranscriptStore: ObservableObject {
         state.destination = .errorAlert
     }
 
+    private func syncPersistedTranscriptIfNeeded() {
+        guard memo.wrappedValue.transcriptText.isEmpty,
+            !memo.wrappedValue.text.characters.isEmpty
+        else {
+            return
+        }
+
+        memo.wrappedValue.transcriptText = String(memo.wrappedValue.text.characters)
+    }
+
+    private func persistCurrentTranscriptSegment() {
+        guard let modelContext else { return }
+
+        let transcript = String(memo.wrappedValue.text.characters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else { return }
+
+        memo.wrappedValue.updateTranscript(
+            transcript,
+            modelId: settings?.modelId ?? TranscriptionOptions.default.modelId,
+            languageCode: settings?.languageCode ?? TranscriptionOptions.default.languageCode
+        )
+
+        if let settings {
+            let cleanedTranscript = TranscriptPostProcessor.process(transcript, settings: settings)
+            memo.wrappedValue.cleanedTranscriptText = cleanedTranscript == transcript
+                ? nil
+                : cleanedTranscript
+        }
+
+        if memo.wrappedValue.transcriptSegments.isEmpty {
+            let segment = TranscriptSegment(
+                startTime: 0,
+                endTime: max(memo.wrappedValue.duration ?? 5, 5),
+                text: transcript,
+                modelId: settings?.modelId ?? TranscriptionOptions.default.modelId,
+                languageCode: settings?.languageCode ?? TranscriptionOptions.default.languageCode
+            )
+            memo.wrappedValue.replaceTranscriptSegments([segment], in: modelContext)
+        }
+
+        alignSpeakersToTranscriptSegments()
+    }
+
+    private func alignSpeakersToTranscriptSegments() {
+        let transcriptSegments = memo.wrappedValue.transcriptSegments
+        guard !transcriptSegments.isEmpty, !memo.wrappedValue.speakerSegments.isEmpty else {
+            return
+        }
+
+        for speakerSegment in memo.wrappedValue.speakerSegments {
+            let overlappingText = transcriptSegments
+                .filter { transcriptSegment in
+                    transcriptSegment.startTime < speakerSegment.endTime
+                        && speakerSegment.startTime < transcriptSegment.endTime
+                }
+                .map(\.text)
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !overlappingText.isEmpty {
+                speakerSegment.text = overlappingText
+            }
+        }
+    }
+
     private func cleanup() {
         progressTimer?.invalidate()
         progressTimer = nil
@@ -322,6 +447,8 @@ extension TranscriptStore {
         var showingSpeakerView = false
         var isEditingSummary = false
         var enhancementError: String?
+        var exportError: String?
+        var exportedURL: URL?
         var finalizedTranscript = AttributedString("")
         var volatileTranscript = AttributedString("")
         var destination: Destination?
@@ -338,6 +465,8 @@ extension TranscriptStore {
         case recordingButtonTapped
         case playButtonTapped
         case aiEnhanceButtonTapped
+        case exportTapped(ExportFormat)
+        case exportDismissed
         case summaryToggleTapped
         case speakerToggleTapped
         case errorAlertDismissed
@@ -354,6 +483,10 @@ extension TranscriptStore {
                 return "playButtonTapped"
             case .aiEnhanceButtonTapped:
                 return "aiEnhanceButtonTapped"
+            case .exportTapped:
+                return "exportTapped"
+            case .exportDismissed:
+                return "exportDismissed"
             case .summaryToggleTapped:
                 return "summaryToggleTapped"
             case .speakerToggleTapped:

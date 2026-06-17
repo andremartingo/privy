@@ -11,9 +11,20 @@ class Memo {
     var title: String
     var text: AttributedString
     var url: URL?  // Audio file URL
+    var sourceURL: URL?
+    var recordingURL: URL?
     var isDone: Bool
     var createdAt: Date
     var duration: TimeInterval?
+    var transcriptText: String = ""
+    var cleanedTranscriptText: String?
+    var languageCode: String?
+    var detectedLanguageCode: String?
+    var modelId: String = TranscriptionOptions.default.modelId
+    var transcriptionStatus: TranscriptionStatus = TranscriptionStatus.pending
+    var transcriptionProgress: Double = 0
+    var errorMessage: String?
+    var transcriptSegments: [TranscriptSegment] = []
 
     // AI-enhanced content - now using AttributedString for rich formatting
     var summary: AttributedString?
@@ -32,8 +43,19 @@ class Memo {
         self.title = title
         self.text = text
         self.url = url
+        self.sourceURL = url
+        self.recordingURL = url
         self.isDone = isDone
         self.duration = duration
+        self.transcriptText = String(text.characters)
+        self.cleanedTranscriptText = nil
+        self.languageCode = TranscriptionOptions.default.languageCode
+        self.detectedLanguageCode = nil
+        self.modelId = TranscriptionOptions.default.modelId
+        self.transcriptionStatus = isDone ? .completed : .pending
+        self.transcriptionProgress = isDone ? 1 : 0
+        self.errorMessage = nil
+        self.transcriptSegments = []
         self.createdAt = Date()
         self.summary = nil
         self.hasSpeakerData = false
@@ -45,6 +67,45 @@ class Memo {
 extension Memo {
     static func blank() -> Memo {
         return .init(title: "New Memo", text: AttributedString(""))
+    }
+
+    static func imported(_ importedAudio: ImportedAudio) -> Memo {
+        let memo = Memo(
+            title: importedAudio.title,
+            text: AttributedString(""),
+            url: importedAudio.localURL,
+            isDone: false,
+            duration: importedAudio.duration
+        )
+        memo.sourceURL = importedAudio.originalURL
+        memo.recordingURL = importedAudio.localURL
+        memo.transcriptionStatus = .pending
+        memo.transcriptionProgress = 0
+        return memo
+    }
+
+    func updateTranscript(_ transcript: String, modelId: String, languageCode: String?) {
+        transcriptText = transcript
+        text = AttributedString(transcript)
+        self.modelId = modelId
+        self.languageCode = languageCode
+        transcriptionStatus = .completed
+        transcriptionProgress = 1
+        errorMessage = nil
+        isDone = true
+    }
+
+    func replaceTranscriptSegments(_ segments: [TranscriptSegment], in context: ModelContext) {
+        for existingSegment in transcriptSegments {
+            context.delete(existingSegment)
+        }
+        transcriptSegments.removeAll()
+
+        for segment in segments {
+            segment.memo = self
+            transcriptSegments.append(segment)
+            context.insert(segment)
+        }
     }
 
     // MARK: - Speaker Diarization Methods

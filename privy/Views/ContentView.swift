@@ -1,11 +1,13 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Query(sort: \Memo.createdAt, order: .reverse) private var memos: [Memo]
     @StateObject private var store = ContentStore()
     @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var modelContext
+    @State private var isImporterPresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -73,6 +75,12 @@ struct ContentView: View {
 
                             if !store.state.isRecording {
                                 Button {
+                                    isImporterPresented = true
+                                } label: {
+                                    Label("Import Media", systemImage: "square.and.arrow.down")
+                                }
+
+                                Button {
                                     Task {
                                         await store.send(.addMemo(modelContext))
                                     }
@@ -91,18 +99,30 @@ struct ContentView: View {
                         VStack {
                             Spacer()
 
-                            Button {
-                                Task {
-                                    await store.send(.addMemo(modelContext))
+                            HStack(spacing: 12) {
+                                Button {
+                                    isImporterPresented = true
+                                } label: {
+                                    Label("Import", systemImage: "square.and.arrow.down")
+                                        .font(.headline)
+                                        .fontWeight(.semibold)
                                 }
-                            } label: {
-                                Label("New", systemImage: "plus.circle.fill")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
+                                .buttonStyle(.glass)
+                                .controlSize(.extraLarge)
+
+                                Button {
+                                    Task {
+                                        await store.send(.addMemo(modelContext))
+                                    }
+                                } label: {
+                                    Label("New", systemImage: "plus.circle.fill")
+                                        .font(.headline)
+                                        .fontWeight(.semibold)
+                                }
+                                .buttonStyle(.glass)
+                                .controlSize(.extraLarge)
+                                .tint(Color(red: 0.36, green: 0.69, blue: 0.55))
                             }
-                            .buttonStyle(.glass)
-                            .controlSize(.extraLarge)
-                            .tint(Color(red: 0.36, green: 0.69, blue: 0.55))  // Using the app's green color
                             .padding(.bottom, 24)
                         }
                     }
@@ -120,6 +140,44 @@ struct ContentView: View {
                 SettingsView(settings: settings)
             }
         #endif
+        .fileImporter(
+            isPresented: $isImporterPresented,
+            allowedContentTypes: [.audio, .movie],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                Task {
+                    await store.send(.importMedia(url, modelContext))
+                }
+            } else if case let .failure(error) = result {
+                Task {
+                    await store.send(.importFailed(error.localizedDescription))
+                }
+            }
+        }
+        .alert(
+            "Import Failed",
+            isPresented: Binding(
+                get: { store.state.importError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        Task {
+                            await store.send(.importErrorDismissed)
+                        }
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                Task {
+                    await store.send(.importErrorDismissed)
+                }
+            }
+        } message: {
+            if let importError = store.state.importError {
+                Text(importError)
+            }
+        }
     }
 
     private var selectionBinding: Binding<Memo?> {

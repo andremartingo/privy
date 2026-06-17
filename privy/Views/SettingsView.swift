@@ -206,6 +206,164 @@ struct GeneralSettingsView: View {
                 }
                 .padding()
             }
+
+            SettingsGroup(title: "Transcription") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Picker(
+                        "Model",
+                        selection: Binding(
+                            get: { settings.modelId },
+                            set: { settings.setModelId($0) }
+                        )
+                    ) {
+                        ForEach(SpeechModel.availableModels) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+
+                    TextField(
+                        "Language",
+                        text: Binding(
+                            get: { settings.languageCode },
+                            set: { settings.setLanguageCode($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    Toggle(
+                        "Detect Language",
+                        isOn: Binding(
+                            get: { settings.detectLanguage },
+                            set: { settings.setDetectLanguage($0) }
+                        )
+                    )
+
+                    Toggle(
+                        "Translate to English",
+                        isOn: Binding(
+                            get: { settings.translateToEnglish },
+                            set: { settings.setTranslateToEnglish($0) }
+                        )
+                    )
+
+                    Toggle(
+                        "Produce Timestamps",
+                        isOn: Binding(
+                            get: { settings.timestampsEnabled },
+                            set: { settings.setTimestampsEnabled($0) }
+                        )
+                    )
+
+                    TextField(
+                        "Initial Prompt",
+                        text: Binding(
+                            get: { settings.initialPrompt },
+                            set: { settings.setInitialPrompt($0) }
+                        ),
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                }
+                .padding()
+            }
+
+            SettingsGroup(title: "Post Processing") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(
+                        "Clean Up Transcript",
+                        isOn: Binding(
+                            get: { settings.cleanupEnabled },
+                            set: { settings.setCleanupEnabled($0) }
+                        )
+                    )
+
+                    Toggle(
+                        "Skip Silent Parts",
+                        isOn: Binding(
+                            get: { settings.skipSilentParts },
+                            set: { settings.setSkipSilentParts($0) }
+                        )
+                    )
+
+                    Toggle(
+                        "Reduce Repetitions",
+                        isOn: Binding(
+                            get: { settings.reduceRepetitions },
+                            set: { settings.setReduceRepetitions($0) }
+                        )
+                    )
+
+                    Toggle(
+                        "Stronger Repetition Reduction",
+                        isOn: Binding(
+                            get: { settings.strongerRepetitionReduction },
+                            set: { settings.setStrongerRepetitionReduction($0) }
+                        )
+                    )
+
+                    Stepper(
+                        value: Binding(
+                            get: { settings.autoDeleteRecordingsAfterDays },
+                            set: { settings.setAutoDeleteRecordingsAfterDays($0) }
+                        ),
+                        in: 0...365
+                    ) {
+                        Text(
+                            settings.autoDeleteRecordingsAfterDays == 0
+                                ? "Never Auto-Delete Recordings"
+                                : "Auto-Delete After \(settings.autoDeleteRecordingsAfterDays) Days"
+                        )
+                    }
+
+                    TextField(
+                        "Word Replacements",
+                        text: Binding(
+                            get: { settings.wordReplacements },
+                            set: { settings.setWordReplacements($0) }
+                        ),
+                        axis: .vertical
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                }
+                .padding()
+            }
+
+            SettingsGroup(title: "Speaker Diarization") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle(
+                        "Diarization Enabled",
+                        isOn: Binding(
+                            get: { settings.diarizationEnabled },
+                            set: { settings.setDiarizationEnabled($0) }
+                        )
+                    )
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Clustering Threshold")
+                            .fontWeight(.medium)
+                        Slider(
+                            value: Binding(
+                                get: { Double(settings.clusteringThreshold) },
+                                set: { settings.setClusteringThreshold(Float($0)) }
+                            ),
+                            in: 0.1...1.0
+                        )
+                    }
+
+                    Stepper(
+                        value: Binding(
+                            get: { settings.maxSpeakers ?? 0 },
+                            set: { settings.setMaxSpeakers($0 == 0 ? nil : $0) }
+                        ),
+                        in: 0...12
+                    ) {
+                        Text(settings.maxSpeakers.map { "Maximum Speakers: \($0)" } ?? "Maximum Speakers: Auto")
+                    }
+                }
+                .padding()
+            }
         }
     }
 }

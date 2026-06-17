@@ -5,6 +5,18 @@ import FluidAudio
 class AppSettings {
     var colorScheme: ColorScheme?
     var useSampleAudioForNewMemos: Bool = false
+    var modelId: String = TranscriptionOptions.default.modelId
+    var languageCode: String = TranscriptionOptions.default.languageCode ?? "en"
+    var detectLanguage: Bool = false
+    var translateToEnglish: Bool = false
+    var initialPrompt: String = ""
+    var timestampsEnabled: Bool = true
+    var cleanupEnabled: Bool = false
+    var skipSilentParts: Bool = false
+    var reduceRepetitions: Bool = false
+    var strongerRepetitionReduction: Bool = false
+    var autoDeleteRecordingsAfterDays: Int = 0
+    var wordReplacements: String = ""
     
     // Diarization settings
     var diarizationEnabled: Bool = true
@@ -29,6 +41,7 @@ class AppSettings {
         }
         
         // Load diarization settings
+        loadTranscriptionSettings()
         loadDiarizationSettings()
         useSampleAudioForNewMemos =
             UserDefaults.standard.object(forKey: "useSampleAudioForNewMemos") as? Bool ?? false
@@ -61,6 +74,98 @@ class AppSettings {
     func setUseSampleAudioForNewMemos(_ enabled: Bool) {
         self.useSampleAudioForNewMemos = enabled
         UserDefaults.standard.set(enabled, forKey: "useSampleAudioForNewMemos")
+    }
+
+    // MARK: - Transcription Settings
+
+    private func loadTranscriptionSettings() {
+        modelId = UserDefaults.standard.string(forKey: "modelId") ?? TranscriptionOptions.default.modelId
+        languageCode = UserDefaults.standard.string(forKey: "languageCode")
+            ?? TranscriptionOptions.default.languageCode
+            ?? "en"
+        detectLanguage = UserDefaults.standard.object(forKey: "detectLanguage") as? Bool ?? false
+        translateToEnglish = UserDefaults.standard.object(forKey: "translateToEnglish") as? Bool ?? false
+        initialPrompt = UserDefaults.standard.string(forKey: "initialPrompt") ?? ""
+        timestampsEnabled = UserDefaults.standard.object(forKey: "timestampsEnabled") as? Bool ?? true
+        cleanupEnabled = UserDefaults.standard.object(forKey: "cleanupEnabled") as? Bool ?? false
+        skipSilentParts = UserDefaults.standard.object(forKey: "skipSilentParts") as? Bool ?? false
+        reduceRepetitions = UserDefaults.standard.object(forKey: "reduceRepetitions") as? Bool ?? false
+        strongerRepetitionReduction = UserDefaults.standard.object(forKey: "strongerRepetitionReduction") as? Bool ?? false
+        autoDeleteRecordingsAfterDays =
+            UserDefaults.standard.object(forKey: "autoDeleteRecordingsAfterDays") as? Int ?? 0
+        wordReplacements = UserDefaults.standard.string(forKey: "wordReplacements") ?? ""
+    }
+
+    func setModelId(_ modelId: String) {
+        self.modelId = modelId
+        UserDefaults.standard.set(modelId, forKey: "modelId")
+    }
+
+    func setLanguageCode(_ languageCode: String) {
+        self.languageCode = languageCode
+        UserDefaults.standard.set(languageCode, forKey: "languageCode")
+    }
+
+    func setDetectLanguage(_ enabled: Bool) {
+        detectLanguage = enabled
+        UserDefaults.standard.set(enabled, forKey: "detectLanguage")
+    }
+
+    func setTranslateToEnglish(_ enabled: Bool) {
+        translateToEnglish = enabled
+        UserDefaults.standard.set(enabled, forKey: "translateToEnglish")
+    }
+
+    func setInitialPrompt(_ prompt: String) {
+        initialPrompt = prompt
+        UserDefaults.standard.set(prompt, forKey: "initialPrompt")
+    }
+
+    func setTimestampsEnabled(_ enabled: Bool) {
+        timestampsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "timestampsEnabled")
+    }
+
+    func setCleanupEnabled(_ enabled: Bool) {
+        cleanupEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "cleanupEnabled")
+    }
+
+    func setSkipSilentParts(_ enabled: Bool) {
+        skipSilentParts = enabled
+        UserDefaults.standard.set(enabled, forKey: "skipSilentParts")
+    }
+
+    func setReduceRepetitions(_ enabled: Bool) {
+        reduceRepetitions = enabled
+        UserDefaults.standard.set(enabled, forKey: "reduceRepetitions")
+    }
+
+    func setStrongerRepetitionReduction(_ enabled: Bool) {
+        strongerRepetitionReduction = enabled
+        UserDefaults.standard.set(enabled, forKey: "strongerRepetitionReduction")
+    }
+
+    func setAutoDeleteRecordingsAfterDays(_ days: Int) {
+        autoDeleteRecordingsAfterDays = days
+        UserDefaults.standard.set(days, forKey: "autoDeleteRecordingsAfterDays")
+    }
+
+    func setWordReplacements(_ replacements: String) {
+        wordReplacements = replacements
+        UserDefaults.standard.set(replacements, forKey: "wordReplacements")
+    }
+
+    var transcriptionOptions: TranscriptionOptions {
+        TranscriptionOptions(
+            modelId: modelId,
+            languageCode: languageCode.isEmpty ? nil : languageCode,
+            detectLanguage: detectLanguage,
+            translateToEnglish: translateToEnglish,
+            prompt: initialPrompt,
+            timestampsEnabled: timestampsEnabled,
+            cleanupEnabled: cleanupEnabled
+        )
     }
     
     // MARK: - Diarization Settings

@@ -29,8 +29,8 @@ class Recorder {
         self.memo = memo
         self.diarizationManager = diarizationManager
         self.modelContext = modelContext
-        self.url = FileManager.default.temporaryDirectory
-            .appending(component: UUID().uuidString)
+        self.url = Self.recordingsDirectory()
+            .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("wav")
     }
 
@@ -39,9 +39,15 @@ class Recorder {
 
         // Update memo URL on main actor - capture specific values to avoid sending self
         let memoURLBinding = memo.url
+        let memoRecordingURLBinding = memo.recordingURL
+        let memoStatusBinding = memo.transcriptionStatus
+        let memoProgressBinding = memo.transcriptionProgress
         let recordingURL = url
         await MainActor.run {
             memoURLBinding.wrappedValue = recordingURL
+            memoRecordingURLBinding.wrappedValue = recordingURL
+            memoStatusBinding.wrappedValue = .recording
+            memoProgressBinding.wrappedValue = 0
         }
 
         guard await isAuthorized() else {
@@ -83,51 +89,64 @@ class Recorder {
 
     @MainActor
     func transcribeSampleAudio(from sampleURL: URL) async throws {
-        print("DEBUG [Recorder]: Starting sample audio transcription")
+        try await transcribeAudioFile(from: sampleURL)
+    }
+
+    @MainActor
+    func transcribeAudioFile(from sourceURL: URL) async throws {
+        print("DEBUG [Recorder]: Starting audio transcription")
 
         await MainActor.run {
-            memo.url.wrappedValue = sampleURL
+            memo.url.wrappedValue = sourceURL
+            memo.recordingURL.wrappedValue = sourceURL
             memo.isDone.wrappedValue = false
+            memo.transcriptionStatus.wrappedValue = .preparing
+            memo.transcriptionProgress.wrappedValue = 0
+            memo.errorMessage.wrappedValue = nil
         }
 
         do {
             try await diarizationManager.initialize()
-            print("DEBUG [Recorder]: Diarization manager initialized for sample audio")
+            print("DEBUG [Recorder]: Diarization manager initialized for audio file")
         } catch {
-            print("DEBUG [Recorder]: Diarization setup failed for sample audio: \(error)")
+            print("DEBUG [Recorder]: Diarization setup failed for audio file: \(error)")
         }
 
-        let sampleFile = try AVAudioFile(forReading: sampleURL)
-        audioFile = sampleFile
+        let sourceFile = try AVAudioFile(forReading: sourceURL)
+        audioFile = sourceFile
 
-        let duration = Double(sampleFile.length) / sampleFile.processingFormat.sampleRate
+        let duration = Double(sourceFile.length) / sourceFile.processingFormat.sampleRate
         await MainActor.run {
             memo.duration.wrappedValue = duration
+            memo.transcriptionStatus.wrappedValue = .transcribing
+            memo.transcriptionProgress.wrappedValue = 0.1
         }
 
         let frameCapacity: AVAudioFrameCount = 4096
-        while sampleFile.framePosition < sampleFile.length {
+        while sourceFile.framePosition < sourceFile.length {
             guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: sampleFile.processingFormat,
+                pcmFormat: sourceFile.processingFormat,
                 frameCapacity: frameCapacity
             ) else {
                 throw TranscriptionError.invalidAudioDataType
             }
 
-            try sampleFile.read(into: buffer)
+            try sourceFile.read(into: buffer)
             guard buffer.frameLength > 0 else { break }
 
             await diarizationManager.processAudioBuffer(buffer)
         }
 
-        try await transcriber.transcribeAudioFile(sampleURL)
+        try await transcriber.transcribeAudioFile(sourceURL)
         await processFinalDiarization()
 
         await MainActor.run {
             memo.isDone.wrappedValue = true
+            memo.transcriptionStatus.wrappedValue = .completed
+            memo.transcriptionProgress.wrappedValue = 1
         }
 
-        print("DEBUG [Recorder]: Sample audio transcription completed")
+        print("DEBUG [Recorder]: Audio transcription completed")
     }
 
     @MainActor
@@ -149,6 +168,8 @@ class Recorder {
         print("DEBUG [Recorder]: Audio stream continuation finished")
 
         do {
+            memo.transcriptionStatus.wrappedValue = .transcribing
+            memo.transcriptionProgress.wrappedValue = 0.1
             try await transcriber.transcribeAudioFile(url)
             print("DEBUG [Recorder]: Transcription finalized")
         } catch {
@@ -163,6 +184,8 @@ class Recorder {
         let memoIsDoneBinding = memo.isDone
         await MainActor.run {
             memoIsDoneBinding.wrappedValue = true
+            memo.transcriptionStatus.wrappedValue = .completed
+            memo.transcriptionProgress.wrappedValue = 1
         }
 
         print("DEBUG [Recorder]: Recording stopped and transcription finalized")
@@ -263,6 +286,22 @@ class Recorder {
         } catch {
             print("DEBUG [Recorder]: Failed to create audio file: \(error)")
             throw error
+        }
+    }
+
+    private static func recordingsDirectory() -> URL {
+        do {
+            let directory = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            .appendingPathComponent("Recordings", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        } catch {
+            return FileManager.default.temporaryDirectory
         }
     }
 
