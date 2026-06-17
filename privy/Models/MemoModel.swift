@@ -21,7 +21,7 @@ class Memo {
     var languageCode: String?
     var detectedLanguageCode: String?
     var modelId: String = TranscriptionOptions.default.modelId
-    var transcriptionStatus: TranscriptionStatus = TranscriptionStatus.pending
+    var transcriptionStatus: TranscriptionStatus?
     var transcriptionProgress: Double = 0
     var errorMessage: String?
     var transcriptSegments: [TranscriptSegment] = []
@@ -65,6 +65,10 @@ class Memo {
 }
 
 extension Memo {
+    var resolvedTranscriptionStatus: TranscriptionStatus {
+        transcriptionStatus ?? (isDone ? .completed : .pending)
+    }
+
     static func blank() -> Memo {
         return .init(title: "New Memo", text: AttributedString(""))
     }

@@ -10,124 +10,62 @@ struct ContentView: View {
     @State private var isImporterPresented = false
 
     var body: some View {
-        NavigationSplitView {
-            ZStack {
-                List(selection: selectionBinding) {
-                    ForEach(memos) { memo in
-                        NavigationLink(value: memo) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(LocalizedStringKey(memo.title))
-                                    .font(.headline)
-                                Text(memo.createdAt.formatted(date: .abbreviated, time: .omitted))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !memo.text.characters.isEmpty {
-                                    Text(
-                                        String(memo.text.characters.prefix(50))
-                                            + (memo.text.characters.count > 50 ? "..." : "")
-                                    )
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                                }
-                            }
-                        }
+        rootContent
+            .fileImporter(
+                isPresented: $isImporterPresented,
+                allowedContentTypes: [.audio, .movie],
+                allowsMultipleSelection: false
+            ) { result in
+                if case let .success(urls) = result, let url = urls.first {
+                    Task {
+                        await store.send(.importMedia(url, modelContext))
                     }
-                    .onDelete { offsets in
-                        Task {
-                            await store.send(.deleteMemos(offsets, memos, modelContext))
-                        }
+                } else if case let .failure(error) = result {
+                    Task {
+                        await store.send(.importFailed(error.localizedDescription))
                     }
                 }
-                .navigationTitle("Memos")
-                .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
-                .toolbar {
-                    #if os(iOS)
-                        // Keep only settings and edit buttons in toolbar
-                        ToolbarItemGroup(placement: .navigationBarTrailing) {
-                            if !memos.isEmpty {
-                                EditButton()
-                            }
-
-                            Button {
-                                Task {
-                                    await store.send(.settingsTapped)
-                                }
-                            } label: {
-                                Label("Settings", systemImage: "gearshape")
-                            }
-                        }
-                    #elseif os(macOS)
-                        // On macOS, settings are in the app menu, so only show the Add button
-                        ToolbarItemGroup(placement: .primaryAction) {
-                            if !memos.isEmpty && store.state.selection != nil {
-                                Button {
-                                    if let selection = store.state.selection {
-                                        Task {
-                                            await store.send(.deleteMemo(selection, modelContext))
-                                        }
-                                    }
-                                } label: {
-                                    Label("Delete Memo", systemImage: "trash")
-                                }
-                                .foregroundColor(.red)
-                            }
-
-                            if !store.state.isRecording {
-                                Button {
-                                    isImporterPresented = true
-                                } label: {
-                                    Label("Import Media", systemImage: "square.and.arrow.down")
-                                }
-
-                                Button {
-                                    Task {
-                                        await store.send(.addMemo(modelContext))
-                                    }
-                                } label: {
-                                    Label("New Memo", systemImage: "plus")
-                                }
-                            }
-                        }
-                    #endif
-                }
-                .toolbarBackground(.hidden)
-
-                #if os(iOS)
-                    // Floating New button at the bottom for iOS
-                    if !store.state.isRecording {
-                        VStack {
-                            Spacer()
-
-                            HStack(spacing: 12) {
-                                Button {
-                                    isImporterPresented = true
-                                } label: {
-                                    Label("Import", systemImage: "square.and.arrow.down")
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                }
-                                .buttonStyle(.glass)
-                                .controlSize(.extraLarge)
-
-                                Button {
-                                    Task {
-                                        await store.send(.addMemo(modelContext))
-                                    }
-                                } label: {
-                                    Label("New", systemImage: "plus.circle.fill")
-                                        .font(.headline)
-                                        .fontWeight(.semibold)
-                                }
-                                .buttonStyle(.glass)
-                                .controlSize(.extraLarge)
-                                .tint(Color(red: 0.36, green: 0.69, blue: 0.55))
-                            }
-                            .padding(.bottom, 24)
-                        }
-                    }
-                #endif
             }
+            .alert(
+                "Import Failed",
+                isPresented: Binding(
+                    get: { store.state.importError != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            Task {
+                                await store.send(.importErrorDismissed)
+                            }
+                        }
+                    }
+                )
+            ) {
+                Button("OK") {
+                    Task {
+                        await store.send(.importErrorDismissed)
+                    }
+                }
+            } message: {
+                if let importError = store.state.importError {
+                    Text(importError)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        #if os(iOS)
+            NavigationStack {
+                mobileMemoList
+                    .navigationDestination(item: selectionBinding) { _ in
+                        TranscriptView(memo: currentMemoBinding, isRecording: isRecordingBinding)
+                    }
+            }
+            .sheet(isPresented: settingsBinding) {
+                SettingsView(settings: settings)
+            }
+        #elseif os(macOS)
+        NavigationSplitView {
+            sidebar
         } detail: {
             if store.state.selection != nil {
                 TranscriptView(memo: currentMemoBinding, isRecording: isRecordingBinding)
@@ -135,48 +73,181 @@ struct ContentView: View {
                 Text("Select an item")
             }
         }
-        #if os(iOS)
-            .sheet(isPresented: settingsBinding) {
-                SettingsView(settings: settings)
-            }
         #endif
-        .fileImporter(
-            isPresented: $isImporterPresented,
-            allowedContentTypes: [.audio, .movie],
-            allowsMultipleSelection: false
-        ) { result in
-            if case let .success(urls) = result, let url = urls.first {
-                Task {
-                    await store.send(.importMedia(url, modelContext))
+    }
+
+    @ViewBuilder
+    private var sidebar: some View {
+        #if os(iOS)
+            mobileMemoList
+        #elseif os(macOS)
+            desktopMemoList
+        #endif
+    }
+
+    #if os(iOS)
+        private var mobileMemoList: some View {
+            ZStack(alignment: .bottom) {
+                Color.black
+                    .ignoresSafeArea()
+
+                List(selection: selectionBinding) {
+                    ForEach(memos) { memo in
+                        Button {
+                            Task {
+                                await store.send(.selectionChanged(memo))
+                            }
+                        } label: {
+                            MemoCardView(memo: memo)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 7, leading: 28, bottom: 7, trailing: 28))
+                        .listRowBackground(Color.black)
+                    }
+                    .onDelete { offsets in
+                        Task {
+                            await store.send(.deleteMemos(offsets, memos, modelContext))
+                        }
+                    }
+
+                    Color.clear
+                        .frame(height: 112)
+                        .listRowInsets(.init())
+                        .listRowBackground(Color.black)
+                        .listRowSeparator(.hidden)
                 }
-            } else if case let .failure(error) = result {
-                Task {
-                    await store.send(.importFailed(error.localizedDescription))
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.black)
+                .navigationTitle("")
+                .toolbar(.hidden, for: .navigationBar)
+
+                if !store.state.isRecording {
+                    mobileCaptureDock
                 }
             }
         }
-        .alert(
-            "Import Failed",
-            isPresented: Binding(
-                get: { store.state.importError != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        Task {
-                            await store.send(.importErrorDismissed)
+
+        private var mobileCaptureDock: some View {
+            HStack(spacing: 22) {
+                Spacer()
+
+                Button {
+                    Task {
+                        await store.send(.addMemo(modelContext))
+                    }
+                } label: {
+                    Circle()
+                        .fill(Color(white: 0.9))
+                        .frame(width: 82, height: 82)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.22), lineWidth: 7)
+                        )
+                        .shadow(color: .black.opacity(0.48), radius: 18, y: 8)
+                }
+                .accessibilityLabel("New memo")
+
+                Button {
+                    isImporterPresented = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 62, height: 62)
+                        .background(Color(white: 0.1), in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.38), radius: 12, y: 7)
+                }
+                .accessibilityLabel("Import media")
+
+                Spacer()
+                    .frame(width: 48)
+            }
+            .padding(.bottom, 18)
+            .background(
+                LinearGradient(
+                    colors: [.black.opacity(0), .black.opacity(0.86), .black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 160)
+                .offset(y: 24),
+                alignment: .bottom
+            )
+        }
+    #endif
+
+    private var desktopMemoList: some View {
+        ZStack {
+            List(selection: selectionBinding) {
+                ForEach(memos) { memo in
+                    NavigationLink(value: memo) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(LocalizedStringKey(memo.title))
+                                .font(.headline)
+                            Text(memo.createdAt.formatted(date: .abbreviated, time: .omitted))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !memo.text.characters.isEmpty {
+                                Text(
+                                    String(memo.text.characters.prefix(50))
+                                        + (memo.text.characters.count > 50 ? "..." : "")
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            }
                         }
                     }
                 }
-            )
-        ) {
-            Button("OK") {
-                Task {
-                    await store.send(.importErrorDismissed)
+                .onDelete { offsets in
+                    Task {
+                        await store.send(.deleteMemos(offsets, memos, modelContext))
+                    }
                 }
             }
-        } message: {
-            if let importError = store.state.importError {
-                Text(importError)
+            .navigationTitle("Memos")
+            .navigationSplitViewColumnWidth(min: 250, ideal: 250, max: 400)
+            .toolbar {
+                #if os(macOS)
+                    ToolbarItemGroup(placement: .primaryAction) {
+                        if !memos.isEmpty && store.state.selection != nil {
+                            Button {
+                                if let selection = store.state.selection {
+                                    Task {
+                                        await store.send(.deleteMemo(selection, modelContext))
+                                    }
+                                }
+                            } label: {
+                                Label("Delete Memo", systemImage: "trash")
+                            }
+                            .foregroundColor(.red)
+                        }
+
+                        if !store.state.isRecording {
+                            Button {
+                                isImporterPresented = true
+                            } label: {
+                                Label("Import Media", systemImage: "square.and.arrow.down")
+                            }
+
+                            Button {
+                                Task {
+                                    await store.send(.addMemo(modelContext))
+                                }
+                            } label: {
+                                Label("New Memo", systemImage: "plus")
+                            }
+                        }
+                    }
+                #endif
             }
+            .toolbarBackground(.hidden)
         }
     }
 
@@ -226,3 +297,90 @@ struct ContentView: View {
         )
     }
 }
+
+#if os(iOS)
+    private struct MemoCardView: View {
+        let memo: Memo
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(formattedDate)
+                        .font(.system(size: 16, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.43))
+
+                    Spacer()
+
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.58))
+                        .accessibilityHidden(true)
+                }
+
+                Text(previewText)
+                    .font(.system(size: 25, weight: .regular, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineSpacing(7)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.86)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 10) {
+                    Spacer()
+
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 23, weight: .medium))
+                        .foregroundStyle(Color(red: 0.19, green: 0.78, blue: 0.54))
+
+                    Text(formattedDuration)
+                        .font(.system(size: 18, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 26)
+            .padding(.bottom, 24)
+            .frame(minHeight: 222)
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(Color(white: 0.065))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.white.opacity(0.025), lineWidth: 1)
+            )
+        }
+
+        private var previewText: String {
+            let cleaned = memo.cleanedTranscriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !cleaned.isEmpty {
+                return cleaned
+            }
+
+            let transcript = memo.transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !transcript.isEmpty {
+                return transcript
+            }
+
+            let text = String(memo.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                return text
+            }
+
+            return memo.title == "New Memo" ? "Ready for a new recording." : memo.title
+        }
+
+        private var formattedDate: String {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "dd/MM/yyyy, HH:mm"
+            return formatter.string(from: memo.createdAt)
+        }
+
+        private var formattedDuration: String {
+            let duration = max(0, Int((memo.duration ?? 0).rounded()))
+            let minutes = duration / 60
+            let seconds = duration % 60
+            return String(format: "%02d:%02d", minutes, seconds)
+        }
+    }
+#endif

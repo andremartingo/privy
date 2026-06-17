@@ -752,11 +752,11 @@ struct TranscriptView: View {
     @ViewBuilder
     private var transcriptStatusView: some View {
         HStack(spacing: 8) {
-            Label(memo.transcriptionStatus.displayName, systemImage: statusIcon)
+            Label(memo.resolvedTranscriptionStatus.displayName, systemImage: statusIcon)
                 .font(.caption)
                 .foregroundStyle(statusColor)
 
-            if memo.transcriptionStatus == .transcribing || memo.transcriptionStatus == .preparing {
+            if memo.resolvedTranscriptionStatus == .transcribing || memo.resolvedTranscriptionStatus == .preparing {
                 ProgressView(value: memo.transcriptionProgress)
                     .frame(maxWidth: 120)
             }
@@ -776,7 +776,7 @@ struct TranscriptView: View {
     }
 
     private var statusIcon: String {
-        switch memo.transcriptionStatus {
+        switch memo.resolvedTranscriptionStatus {
         case .pending:
             return "clock"
         case .recording:
@@ -795,7 +795,7 @@ struct TranscriptView: View {
     }
 
     private var statusColor: Color {
-        switch memo.transcriptionStatus {
+        switch memo.resolvedTranscriptionStatus {
         case .completed:
             return .green
         case .failed, .cancelled:
