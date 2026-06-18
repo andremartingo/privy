@@ -1,12 +1,18 @@
 import CoreMedia
+import Foundation
 import SwiftData
 import SwiftUI
 
 struct TranscriptView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(AppSettings.self) private var settings
     @StateObject private var store: TranscriptStore
     @Binding private var parentIsRecording: Bool
+    #if os(iOS)
+        @State private var isSearchPresented = false
+        @State private var transcriptSearchText = ""
+    #endif
 
     private var memo: Memo { store.memo.wrappedValue }
     private var isRecording: Bool { store.state.isRecording }
@@ -25,6 +31,54 @@ struct TranscriptView: View {
     }
 
     var body: some View {
+        transcriptSurface
+            .task {
+                await store.send(.onAppear(modelContext, settings))
+            }
+            .onChange(of: isRecording) { _, newValue in
+                parentIsRecording = newValue
+            }
+            .onDisappear {
+                Task {
+                    await store.send(.onDisappear)
+                }
+            }
+            .alert(
+                "Enhancement Error",
+                isPresented: Binding(
+                    get: { store.state.enhancementError != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            Task {
+                                await store.send(.errorAlertDismissed)
+                            }
+                        }
+                    }
+                )
+            ) {
+                Button("OK") {
+                    Task {
+                        await store.send(.errorAlertDismissed)
+                    }
+                }
+            } message: {
+                if let error = store.state.enhancementError {
+                    Text(error)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var transcriptSurface: some View {
+        #if os(iOS)
+            mobileTranscriptSurface
+        #elseif os(macOS)
+            desktopTranscriptSurface
+        #endif
+    }
+
+    #if os(macOS)
+    private var desktopTranscriptSurface: some View {
         ZStack {
             VStack(spacing: 0) {
                 // Main content
@@ -64,120 +118,437 @@ struct TranscriptView: View {
             #endif
         }
         .navigationTitle(memo.title)
-        #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarBackButtonHidden(isRecording)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 2) {
-                        Text(memo.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 200)
-
-                        if memo.isDone {
-                            Text(memo.createdAt.formatted(date: .abbreviated, time: .omitted))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        #endif
         .toolbar {
-            #if os(macOS)
-                Group {
-                    // AI controls
-                    if memo.isDone {
-                        // Enhance button
+            Group {
+                // AI controls
+                if memo.isDone {
+                    // Enhance button
+                    ToolbarItem {
+                        enhanceButton
+                    }
+
+                    ToolbarItem {
+                        exportMenu
+                    }
+
+                    if let exportedURL = store.state.exportedURL {
                         ToolbarItem {
-                            enhanceButton
-                        }
-
-                        ToolbarItem {
-                            exportMenu
-                        }
-
-                        if let exportedURL = store.state.exportedURL {
-                            ToolbarItem {
-                                ShareLink(item: exportedURL) {
-                                    Label("Share Export", systemImage: "square.and.arrow.up")
-                                }
-                            }
-                        }
-
-                        // View toggle buttons
-                        if memo.summary != nil {
-                            ToolbarItem {
-                                viewToggleButton
-                            }
-                        }
-                        
-                        if memo.hasSpeakerData {
-                            ToolbarItem {
-                                speakerViewToggleButton
+                            ShareLink(item: exportedURL) {
+                                Label("Share Export", systemImage: "square.and.arrow.up")
                             }
                         }
                     }
 
-                    ToolbarSpacer(.fixed)
-
-                    // Recording control
-                    if !memo.isDone {
+                    // View toggle buttons
+                    if memo.summary != nil {
                         ToolbarItem {
-                            recordButton
+                            viewToggleButton
                         }
                     }
-
-                    ToolbarSpacer(.fixed)
-
-                    // Playback control
-                    if memo.isDone {
+                    
+                    if memo.hasSpeakerData {
                         ToolbarItem {
-                            playButton
+                            speakerViewToggleButton
                         }
                     }
+                }
 
-                    ToolbarSpacer(.fixed)
-                }
-            #endif
-        }
-        .task {
-            await store.send(.onAppear(modelContext, settings))
-        }
-        .onChange(of: isRecording) { _, newValue in
-            parentIsRecording = newValue
-        }
-        .onDisappear {
-            Task {
-                await store.send(.onDisappear)
-            }
-        }
-        .alert(
-            "Enhancement Error",
-            isPresented: Binding(
-                get: { store.state.enhancementError != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        Task {
-                            await store.send(.errorAlertDismissed)
-                        }
+                ToolbarSpacer(.fixed)
+
+                // Recording control
+                if !memo.isDone {
+                    ToolbarItem {
+                        recordButton
                     }
                 }
-            )
-        ) {
-            Button("OK") {
-                Task {
-                    await store.send(.errorAlertDismissed)
+
+                ToolbarSpacer(.fixed)
+
+                // Playback control
+                if memo.isDone {
+                    ToolbarItem {
+                        playButton
+                    }
                 }
-            }
-        } message: {
-            if let error = store.state.enhancementError {
-                Text(error)
+
+                ToolbarSpacer(.fixed)
             }
         }
     }
+    #endif
+
+    #if os(iOS)
+    private var mobileTranscriptSurface: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            mobilePrimaryContent
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    mobileTopBar
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    mobileBottomBar
+                }
+        }
+        .preferredColorScheme(.dark)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private var mobilePrimaryContent: some View {
+        if !memo.isDone {
+            mobileLiveRecordingView
+        } else if memo.summary != nil && showingEnhancedView {
+            enhancedView
+                .background(Color.black)
+        } else if memo.hasSpeakerData && showingSpeakerView {
+            speakerView
+                .background(Color.black)
+        } else {
+            mobilePlaybackView
+        }
+    }
+
+    private var mobileTopBar: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Button {
+                    if !isRecording {
+                        dismiss()
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(.white.opacity(isRecording ? 0.35 : 0.92))
+                        .frame(width: 58, height: 58)
+                        .background(Color.white.opacity(0.08), in: Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.045), lineWidth: 1)
+                        )
+                }
+                .disabled(isRecording)
+                .accessibilityLabel("Back")
+
+                Text("Transcript")
+                    .font(.system(size: 23, weight: .regular, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+
+                Spacer(minLength: 6)
+
+                HStack(spacing: 17) {
+                    Button {
+                        handleViewModeButtonTap()
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.system(size: 23, weight: .medium))
+                    }
+                    .accessibilityLabel("Toggle transcript view")
+
+                    Button {
+                        withAnimation(.smooth(duration: 0.2)) {
+                            isSearchPresented.toggle()
+                            if !isSearchPresented {
+                                transcriptSearchText = ""
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 25, weight: .regular))
+                    }
+                    .accessibilityLabel("Search transcript")
+
+                    mobileOverflowMenu
+                }
+                .foregroundStyle(.white.opacity(0.78))
+                .padding(.horizontal, 15)
+                .frame(height: 58)
+                .background(Color.white.opacity(0.08), in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.045), lineWidth: 1)
+                )
+            }
+
+            if isSearchPresented {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.45))
+
+                    TextField("Search", text: $transcriptSearchText)
+                        .font(.system(size: 17, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+
+                    if !transcriptSearchText.isEmpty {
+                        Button {
+                            transcriptSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.white.opacity(0.42))
+                        }
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+                .padding(.horizontal, 18)
+                .frame(height: 46)
+                .background(Color.white.opacity(0.08), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 8)
+        .padding(.bottom, 16)
+        .background(Color.black)
+    }
+
+    private var mobileOverflowMenu: some View {
+        Menu {
+            if memo.summary != nil {
+                Button(showingEnhancedView ? "Show Transcript" : "Show Summary") {
+                    Task {
+                        await store.send(.summaryToggleTapped)
+                    }
+                }
+            }
+
+            if memo.hasSpeakerData {
+                Button(showingSpeakerView ? "Show Transcript" : "Show Speakers") {
+                    Task {
+                        await store.send(.speakerToggleTapped)
+                    }
+                }
+            }
+
+            Button(memo.summary != nil ? "Re-summarize" : "Summarize") {
+                handleAIEnhanceButtonTap()
+            }
+            .disabled(memo.text.characters.isEmpty || isGenerating)
+
+            Menu("Export") {
+                ForEach(ExportFormat.allCases) { format in
+                    Button(format.displayName) {
+                        Task {
+                            await store.send(.exportTapped(format))
+                        }
+                    }
+                }
+            }
+            .disabled(memo.transcriptText.isEmpty && memo.text.characters.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 22, weight: .bold))
+        }
+        .accessibilityLabel("More")
+    }
+
+    private var mobilePlaybackView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 34) {
+                let blocks = visibleMobileTranscriptBlocks
+
+                if blocks.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("0:00")
+                            .font(.system(size: 17, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.26))
+
+                        Text(
+                            transcriptSearchText.isEmpty
+                                ? "No transcript yet."
+                                : "No matching transcript text."
+                        )
+                        .font(.system(size: 22, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineSpacing(9)
+                    }
+                } else {
+                    ForEach(blocks) { block in
+                        mobileTranscriptBlock(block)
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .background(Color.black)
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private func mobileTranscriptBlock(_ block: MobileTranscriptBlock) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(formatShortTimestamp(block.timestamp))
+                .font(.system(size: 17, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.26))
+
+            Text(block.text)
+                .font(.system(size: 22, weight: .regular, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+                .lineSpacing(9)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var mobileLiveRecordingView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Text(formatShortTimestamp(recordingDuration))
+                    .font(.system(size: 17, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.26))
+
+                if store.state.finalizedTranscript.utf8.isEmpty
+                    && store.state.volatileTranscript.utf8.isEmpty
+                {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Image(systemName: isProcessingSampleAudio ? "waveform" : "mic.fill")
+                            .font(.system(size: 36, weight: .semibold))
+                            .foregroundStyle(isProcessingSampleAudio ? SpokenWordTranscriber.green : .red)
+                            .symbolEffect(.pulse, isActive: isRecording)
+
+                        Text(isProcessingSampleAudio ? "Processing audio..." : "Listening...")
+                            .font(.system(size: 24, weight: .regular, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.82))
+
+                        Text(
+                            isProcessingSampleAudio
+                                ? "Transcribing the selected recording."
+                                : "Start speaking into the microphone."
+                        )
+                        .font(.system(size: 18, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.44))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 12)
+                } else {
+                    Text(store.state.finalizedTranscript + store.state.volatileTranscript)
+                        .font(.system(size: 22, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .lineSpacing(9)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .background(Color.black)
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectStyle(.soft, for: .all)
+    }
+
+    private var mobileBottomBar: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [.black.opacity(0), .black.opacity(0.78), .black],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 26)
+
+            if memo.isDone {
+                mobilePlayerBar
+            } else {
+                mobileRecordBar
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .background(Color.black.opacity(0.96))
+    }
+
+    private var mobilePlayerBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                handlePlayButtonTap()
+            } label: {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .disabled(memo.url == nil)
+            .opacity(memo.url == nil ? 0.45 : 1)
+            .accessibilityLabel(isPlaying ? "Pause" : "Play")
+
+            mobileWaveform
+                .frame(maxWidth: .infinity)
+
+            Text("1x")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+
+            Text("\(formatDuration(currentPlaybackTime))/\(formatDuration(memo.duration ?? 0))")
+                .font(.system(size: 15, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 64)
+        .background(.ultraThinMaterial, in: Capsule())
+        .background(Color.white.opacity(0.06), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private var mobileRecordBar: some View {
+        Button {
+            handleRecordingButtonTap()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: sampleOrRecordingButtonImage)
+                    .font(.system(size: 22, weight: .bold))
+
+                Text(sampleOrRecordingButtonTitle)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+
+                if isProcessingSampleAudio {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(formatDuration(recordingDuration))
+                        .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 64)
+            .background(
+                isRecording ? Color.red.opacity(0.64) : Color.white.opacity(0.09),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessingSampleAudio)
+    }
+
+    private var mobileWaveform: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(Array(mobileWaveformHeights.enumerated()), id: \.offset) { index, height in
+                Capsule()
+                    .fill(index <= mobilePlaybackBarIndex ? Color.white.opacity(0.72) : Color.white.opacity(0.24))
+                    .frame(width: 2.5, height: height)
+            }
+        }
+        .frame(height: 38)
+        .accessibilityHidden(true)
+    }
+    #endif
 
     // MARK: - Bottom Button Bar for iOS
 
@@ -855,6 +1226,14 @@ struct TranscriptView: View {
     }
 }
 
+#if os(iOS)
+private struct MobileTranscriptBlock: Identifiable {
+    let id: String
+    let timestamp: TimeInterval
+    let text: String
+}
+#endif
+
 // MARK: - TranscriptView Extension
 
 extension TranscriptView {
@@ -865,6 +1244,138 @@ extension TranscriptView {
         let seconds = Int(duration) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
+
+    #if os(iOS)
+    private var mobileWaveformHeights: [CGFloat] {
+        [13, 25, 18, 31, 16, 37, 22, 29, 14, 34, 19, 40, 24, 32, 17, 36, 21, 30, 15, 35, 20, 38, 23, 31, 18, 28, 14, 33, 19, 27]
+    }
+
+    private var mobilePlaybackBarIndex: Int {
+        guard let duration = memo.duration, duration > 0 else { return -1 }
+        let progress = min(max(currentPlaybackTime / duration, 0), 1)
+        return Int(progress * Double(max(mobileWaveformHeights.count - 1, 0)))
+    }
+
+    private var visibleMobileTranscriptBlocks: [MobileTranscriptBlock] {
+        let blocks = mobileTranscriptBlocks
+        let query = transcriptSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return blocks }
+
+        return blocks.filter { block in
+            block.text.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive]
+            ) != nil
+        }
+    }
+
+    private var mobileTranscriptBlocks: [MobileTranscriptBlock] {
+        let segments = memo.transcriptSegments
+            .sorted { $0.startTime < $1.startTime }
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        if !segments.isEmpty {
+            return segments.map { segment in
+                MobileTranscriptBlock(
+                    id: segment.id,
+                    timestamp: segment.startTime,
+                    text: segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+        }
+
+        let chunks = mobileTextChunks(from: mobileTranscriptText)
+        guard !chunks.isEmpty else { return [] }
+
+        let duration = memo.duration ?? Double(max(chunks.count, 1)) * 10
+        let interval = duration / Double(max(chunks.count, 1))
+
+        return chunks.enumerated().map { index, chunk in
+            MobileTranscriptBlock(
+                id: "\(index)-\(chunk.hashValue)",
+                timestamp: Double(index) * interval,
+                text: chunk
+            )
+        }
+    }
+
+    private var mobileTranscriptText: String {
+        let transcript = memo.transcriptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !transcript.isEmpty {
+            return transcript
+        }
+
+        let text = String(memo.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            return text
+        }
+
+        return memo.cleanedTranscriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func mobileTextChunks(from text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let paragraphs = trimmed
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if paragraphs.count > 1 {
+            return paragraphs
+        }
+
+        var chunks: [String] = []
+        var currentSentences: [String] = []
+        var currentCharacterCount = 0
+
+        trimmed.enumerateSubstrings(
+            in: trimmed.startIndex..<trimmed.endIndex,
+            options: [.bySentences, .localized]
+        ) { substring, _, _, _ in
+            guard let sentence = substring?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !sentence.isEmpty
+            else {
+                return
+            }
+
+            currentSentences.append(sentence)
+            currentCharacterCount += sentence.count
+
+            if currentSentences.count >= 3 || currentCharacterCount > 260 {
+                chunks.append(currentSentences.joined(separator: " "))
+                currentSentences.removeAll()
+                currentCharacterCount = 0
+            }
+        }
+
+        if !currentSentences.isEmpty {
+            chunks.append(currentSentences.joined(separator: " "))
+        }
+
+        return chunks.isEmpty ? [trimmed] : chunks
+    }
+
+    private func formatShortTimestamp(_ duration: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(duration.rounded(.down)))
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return "\(minutes):" + String(format: "%02d", seconds)
+    }
+
+    private func handleViewModeButtonTap() {
+        if memo.summary != nil {
+            Task {
+                await store.send(.summaryToggleTapped)
+            }
+        } else if memo.hasSpeakerData {
+            Task {
+                await store.send(.speakerToggleTapped)
+            }
+        }
+    }
+    #endif
 
     private var sampleOrRecordingButtonTitle: String {
         if isProcessingSampleAudio {
